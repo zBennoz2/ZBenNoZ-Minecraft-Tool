@@ -1,0 +1,836 @@
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  CreateInstancePayload,
+  Instance,
+  InstanceMetrics,
+  InstanceStatus,
+  LoaderType,
+  PrepareInstanceOptions,
+  ServerType,
+  createInstance,
+  getCatalogVersions,
+  getInstanceMetrics,
+  getInstanceStatus,
+  listInstances,
+  prepareInstance,
+  startInstance,
+  stopInstance,
+} from '../api'
+
+type PrepareState = 'not_prepared' | 'preparing' | 'prepared' | 'error'
+
+interface ActionState {
+  id: string
+  type: 'start' | 'stop'
+}
+
+const formatBytes = (bytes: number | null | undefined) => {
+  if (bytes === null || bytes === undefined) return '—'
+  if (bytes < 1024) return `${bytes.toFixed(0)} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = -1
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex] ?? 'B'}`
+}
+
+const formatDuration = (ms: number | null | undefined) => {
+  if (!ms) return '—'
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+const clampPercent = (value: number | null | undefined) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return 0
+  return Math.min(100, Math.max(0, value))
+}
+
+const MiniSparkline = ({ values, title }: { values?: number[]; title: string }) => {
+  if (!values || values.length < 2) {
+    return <div className="sparkline sparkline--empty">—</div>
+  }
+
+  const points = values.slice(-60)
+  const width = 120
+  const height = 32
+  const step = width / Math.max(points.length - 1, 1)
+  const pathD = points
+    .map((value, index) => {
+      const x = index * step
+      const y = height - (clampPercent(value) / 100) * height
+      return `${index === 0 ? 'M' : 'L'}${x},${y}`
+    })
+    .join(' ')
+
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} aria-hidden>
+      <title>{title}</title>
+      <path d={pathD} />
+    </svg>
+  )
+}
+
+export function Dashboard() {
+  const [instances, setInstances] = useState<Instance[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [activeAction, setActiveAction] = useState<ActionState | null>(null)
+  const [statusByInstanceId, setStatusByInstanceId] = useState<
+    Record<string, InstanceStatus>
+  >({})
+  const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
+
+  const [createName, setCreateName] = useState('')
+  const [createServerType, setCreateServerType] = useState<ServerType | ''>('')
+  const [minecraftVersion, setMinecraftVersion] = useState('')
+  const [loaderVersion, setLoaderVersion] = useState('')
+  const [loaderOptions, setLoaderOptions] = useState<string[]>([])
+  const [catalogVersions, setCatalogVersions] = useState<string[]>([])
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [loaderVersionsByMinecraft, setLoaderVersionsByMinecraft] = useState<
+    Record<string, string[]>
+  >({})
+  const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [prepareStateByInstanceId, setPrepareStateByInstanceId] = useState<
+    Record<string, PrepareState>
+  >({})
+  const [prepareMessageByInstanceId, setPrepareMessageByInstanceId] = useState<
+    Record<string, string | undefined>
+  >({})
+  const [metricsByInstanceId, setMetricsByInstanceId] = useState<
+    Record<string, InstanceMetrics>
+  >({})
+  const [metricsErrorByInstanceId, setMetricsErrorByInstanceId] = useState<
+    Record<string, string>
+  >({})
+  const metricsControllersRef = useRef<Record<string, AbortController>>({})
+  const [metricsHistoryByInstanceId, setMetricsHistoryByInstanceId] = useState<
+    Record<string, { cpu: number[]; memory: number[] }>
+  >({})
+  const [cardDensity, setCardDensity] = useState<'comfortable' | 'compact'>(
+    'comfortable',
+  )
+
+  const isBusy = useMemo(() => loading || Boolean(activeAction), [loading, activeAction])
+  const requiresLoader = useMemo(
+    () =>
+      createServerType === 'fabric' ||
+      createServerType === 'forge' ||
+      createServerType === 'neoforge',
+    [createServerType],
+  )
+  const showLoaderSelect = useMemo(
+    () =>
+      requiresLoader &&
+      (loaderOptions.length > 0 || Object.keys(loaderVersionsByMinecraft).length > 0),
+    [loaderOptions.length, loaderVersionsByMinecraft, requiresLoader],
+  )
+  const createDisabled = useMemo(() => {
+    if (!createName.trim() || !createServerType || !minecraftVersion) return true
+    if (showLoaderSelect && !loaderVersion) return true
+    return creating
+  }, [createName, createServerType, creating, loaderVersion, minecraftVersion, showLoaderSelect])
+
+  const runningCount = useMemo(
+    () => instances.filter((instance) => statusByInstanceId[instance.id]?.status === 'running').length,
+    [instances, statusByInstanceId],
+  )
+
+  const preparedCount = useMemo(
+    () =>
+      instances.filter((instance) => {
+        const state = prepareStateByInstanceId[instance.id] ?? 'prepared'
+        return state === 'prepared'
+      }).length,
+    [instances, prepareStateByInstanceId],
+  )
+
+  const totalPlayers = useMemo(
+    () =>
+      instances.reduce((total, instance) => {
+        const metrics = metricsByInstanceId[instance.id]
+        const onlinePlayers = metrics?.onlinePlayers ?? metrics?.playersOnline
+        if (onlinePlayers && onlinePlayers > 0) {
+          return total + onlinePlayers
+        }
+        return total
+      }, 0),
+    [instances, metricsByInstanceId],
+  )
+
+  const refreshInstanceStatus = async (instanceId: string) => {
+    const status = await getInstanceStatus(instanceId)
+    setStatusByInstanceId((prev) => ({ ...prev, [instanceId]: status }))
+  }
+
+  const updateMetricsHistory = (
+    instanceId: string,
+    cpuPercent: number | null,
+    memoryPercent: number | null,
+  ) => {
+    const maxPoints = 60
+    setMetricsHistoryByInstanceId((prev) => {
+      const next = { ...prev }
+      const existing = next[instanceId] ?? { cpu: [], memory: [] }
+      if (cpuPercent !== null) {
+        existing.cpu = [...existing.cpu, clampPercent(cpuPercent)].slice(-maxPoints)
+      }
+      if (memoryPercent !== null) {
+        existing.memory = [...existing.memory, clampPercent(memoryPercent)].slice(-maxPoints)
+      }
+      next[instanceId] = existing
+      return next
+    })
+  }
+
+  const refreshInstanceMetrics = async (instanceId: string) => {
+    if (metricsControllersRef.current[instanceId]) {
+      metricsControllersRef.current[instanceId]?.abort()
+    }
+
+    const controller = new AbortController()
+    metricsControllersRef.current[instanceId] = controller
+
+    try {
+      const metrics = await getInstanceMetrics(instanceId, { signal: controller.signal })
+      setMetricsByInstanceId((prev) => ({ ...prev, [instanceId]: metrics }))
+      setMetricsErrorByInstanceId((prev) => {
+        const next = { ...prev }
+        delete next[instanceId]
+        return next
+      })
+      setStatusByInstanceId((prev) => ({ ...prev, [instanceId]: { status: metrics.status, pid: metrics.pid } }))
+
+      const memoryPercent =
+        metrics.memoryLimitBytes && metrics.memoryLimitBytes > 0 && metrics.memoryBytes !== null
+          ? (metrics.memoryBytes / metrics.memoryLimitBytes) * 100
+          : null
+
+      updateMetricsHistory(instanceId, metrics.cpuPercent, memoryPercent)
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') return
+      const message = error instanceof Error ? error.message : 'Metrics unavailable'
+      setMetricsErrorByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+    }
+  }
+
+  const updatePrepareState = (
+    instanceId: string,
+    state: PrepareState,
+    message?: string,
+  ) => {
+    setPrepareStateByInstanceId((prev) => ({ ...prev, [instanceId]: state }))
+    setPrepareMessageByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+  }
+
+  const triggerPrepare = async (instance: Instance) => {
+    const prepareOptions: PrepareInstanceOptions = {
+      serverType: instance.serverType,
+      minecraftVersion: instance.minecraftVersion,
+      loader: instance.loader,
+    }
+
+    updatePrepareState(instance.id, 'preparing')
+    const result = await prepareInstance(instance.id, prepareOptions)
+
+    if (result.success) {
+      updatePrepareState(instance.id, 'prepared', result.message)
+    } else {
+      updatePrepareState(instance.id, 'error', result.message ?? 'Prepare failed')
+    }
+
+    await refreshInstanceStatus(instance.id)
+  }
+
+  const fetchInstances = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await listInstances()
+      setInstances(result)
+      setSelectedInstanceId((prev) => (prev && result.some((r) => r.id === prev) ? prev : null))
+      setPrepareStateByInstanceId((prev) => {
+        const next = { ...prev }
+        result.forEach((instance) => {
+          if (!next[instance.id]) {
+            next[instance.id] = 'prepared'
+          }
+        })
+        return next
+      })
+      const ids = result.map((instance) => instance.id)
+      await Promise.all(ids.map((instanceId) => refreshInstanceStatus(instanceId)))
+      setStatusByInstanceId((prev) => {
+        const next = { ...prev }
+        ids.forEach((id) => {
+          if (!next[id]) {
+            next[id] = { status: 'unknown', pid: null }
+          }
+        })
+        return next
+      })
+      await Promise.all(ids.map((instanceId) => refreshInstanceMetrics(instanceId)))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load instances'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAction = async (id: string, type: ActionState['type']) => {
+    setActiveAction({ id, type })
+    setError(null)
+    try {
+      if (type === 'start') {
+        const result = await startInstance(id)
+        if (result.status === 'needs_java') {
+          const majorText = result.recommendedMajor ? `Java ${result.recommendedMajor}` : 'Java'
+          setError(`Instance requires ${majorText}. Please install the recommended Java runtime and try again.`)
+        } else if (result.status === 'ok') {
+          // noop
+        }
+      } else {
+        await stopInstance(id)
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Action failed'
+      setError(message)
+      if (
+        type === 'start' &&
+        /jar not found|server jar|missing server jar/i.test(message)
+      ) {
+        updatePrepareState(id, 'not_prepared', message)
+      }
+    } finally {
+      await refreshInstanceStatus(id)
+      setActiveAction(null)
+    }
+  }
+
+  useEffect(() => {
+    fetchInstances()
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      Object.values(metricsControllersRef.current).forEach((controller) => controller.abort())
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!createServerType) {
+      setCatalogVersions([])
+      setLoaderOptions([])
+      setLoaderVersionsByMinecraft({})
+      setCatalogError(null)
+      return
+    }
+
+    const loadCatalog = async () => {
+      setCatalogLoading(true)
+      setCatalogError(null)
+      try {
+        const catalog = await getCatalogVersions(createServerType)
+        setCatalogVersions(catalog.versions)
+        setLoaderVersionsByMinecraft(catalog.loaderVersionsByMinecraft ?? {})
+        if (catalog.loaderVersions) {
+          setLoaderOptions(catalog.loaderVersions)
+        } else {
+          setLoaderOptions([])
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Failed to load catalog versions for selected server type'
+        setCatalogError(message)
+        setCatalogVersions([])
+        setLoaderOptions([])
+      } finally {
+        setCatalogLoading(false)
+      }
+    }
+
+    loadCatalog()
+  }, [createServerType])
+
+  useEffect(() => {
+    if (!requiresLoader) {
+      setLoaderOptions([])
+      return
+    }
+
+    if (minecraftVersion && loaderVersionsByMinecraft[minecraftVersion]) {
+      setLoaderOptions(loaderVersionsByMinecraft[minecraftVersion])
+      setLoaderVersion('')
+    }
+  }, [loaderVersionsByMinecraft, minecraftVersion, requiresLoader])
+
+  const handleOpenCreate = () => {
+    setIsCreateOpen(true)
+    setCreateName('')
+    setCreateServerType('')
+    setMinecraftVersion('')
+    setLoaderVersion('')
+    setLoaderOptions([])
+    setCatalogVersions([])
+    setCatalogError(null)
+    setCreateError(null)
+  }
+
+  const handleCreateInstance = async (event: FormEvent) => {
+    event.preventDefault()
+    if (createDisabled || !createServerType) return
+
+    const trimmedName = createName.trim()
+    if (!trimmedName) {
+      setCreateError('Name is required')
+      return
+    }
+
+    const payload: CreateInstancePayload = {
+      name: trimmedName,
+      serverType: createServerType,
+      minecraftVersion,
+    }
+
+    if (requiresLoader) {
+      const loaderType = createServerType as LoaderType
+      const loaderVersionToUse = loaderVersion || (!showLoaderSelect ? minecraftVersion : '')
+      if (loaderVersionToUse) {
+        payload.loader = { type: loaderType, version: loaderVersionToUse }
+      }
+    }
+
+    setCreating(true)
+    setCreateError(null)
+
+    try {
+      const created = await createInstance(payload)
+      setIsCreateOpen(false)
+      setSelectedInstanceId(created.id)
+      setCreateName('')
+      setCreateServerType('')
+      setMinecraftVersion('')
+      setLoaderVersion('')
+      updatePrepareState(created.id, 'preparing')
+      await fetchInstances()
+      await refreshInstanceStatus(created.id)
+      await triggerPrepare(created)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create instance'
+      setCreateError(message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  useEffect(() => {
+    if (pollerRef.current) {
+      clearInterval(pollerRef.current)
+    }
+
+    const pollStatuses = () => {
+      const ids = instances.map((instance) => instance.id)
+      ids.forEach((instanceId) => {
+        refreshInstanceStatus(instanceId)
+        refreshInstanceMetrics(instanceId)
+      })
+    }
+
+    if (instances.length > 0) {
+      pollerRef.current = setInterval(pollStatuses, 4000)
+    }
+
+    return () => {
+      if (pollerRef.current) {
+        clearInterval(pollerRef.current)
+        pollerRef.current = null
+      }
+    }
+  }, [instances])
+
+  return (
+    <section className="page">
+      <div className="page__header page__header--spread">
+        <div>
+          <h1>Dashboard</h1>
+          <p className="page__hint">Server overview & quick controls</p>
+        </div>
+        <div className="actions">
+          <div className="toggle" role="group" aria-label="Density toggle">
+            <button
+              type="button"
+              className={cardDensity === 'comfortable' ? 'active' : ''}
+              onClick={() => setCardDensity('comfortable')}
+            >
+              Comfortable
+            </button>
+            <button
+              type="button"
+              className={cardDensity === 'compact' ? 'active' : ''}
+              onClick={() => setCardDensity('compact')}
+            >
+              Compact
+            </button>
+          </div>
+          <button className="btn btn--ghost" onClick={fetchInstances} disabled={loading}>
+            {loading ? 'Reloading…' : 'Reload'}
+          </button>
+          <button className="btn" onClick={handleOpenCreate}>
+            Create Instance
+          </button>
+        </div>
+      </div>
+
+      {error ? <div className="alert alert--error">{error}</div> : null}
+      {loading ? <div className="alert alert--muted">Loading instances…</div> : null}
+
+      <div className="metrics-grid">
+        <div className="metrics-card">
+          <span className="metrics-card__label">Total Instances</span>
+          <div className="metrics-card__value">{instances.length}</div>
+          <p className="page__hint">Active overview widgets stay balanced.</p>
+        </div>
+        <div className="metrics-card">
+          <span className="metrics-card__label">Running</span>
+          <div className="metrics-card__value">{runningCount}</div>
+          <p className="page__hint">Quickly spot what is live.</p>
+        </div>
+        <div className="metrics-card">
+          <span className="metrics-card__label">Players Online</span>
+          <div className="metrics-card__value">{totalPlayers}</div>
+          <p className="page__hint">Summed from available metrics.</p>
+        </div>
+        <div className="metrics-card">
+          <span className="metrics-card__label">Prepared</span>
+          <div className="metrics-card__value">{preparedCount}</div>
+          <p className="page__hint">Ready for quick starts.</p>
+        </div>
+      </div>
+
+      {!loading && instances.length === 0 && !error ? (
+        <div className="empty">No instances found.</div>
+      ) : null}
+
+      <div className={`instance-grid${cardDensity === 'compact' ? ' instance-grid--compact' : ''}`}>
+        {instances.map((instance) => {
+          const isActive = activeAction?.id === instance.id
+          const status = statusByInstanceId[instance.id]?.status ?? 'unknown'
+          const metrics = metricsByInstanceId[instance.id]
+          const metricsError = metricsErrorByInstanceId[instance.id]
+          const displayStatus = metrics?.status ?? status
+          const badgeStatus = displayStatus !== 'unknown' ? displayStatus : undefined
+          const isSelected = selectedInstanceId === instance.id
+          const prepareState = prepareStateByInstanceId[instance.id] ?? 'prepared'
+          const prepareMessage = prepareMessageByInstanceId[instance.id]
+          const startDisabled =
+            isBusy || displayStatus === 'running' || prepareState !== 'prepared'
+          const prepareDisabled = isBusy || prepareState === 'preparing'
+          const isRunning = displayStatus === 'running' || displayStatus === 'starting'
+          const cpuPercent = isRunning ? metrics?.cpuPercent ?? 0 : 0
+          const memoryBytes = isRunning ? metrics?.memoryBytes ?? 0 : 0
+          const memoryLimitBytes = metrics?.memoryLimitBytes ?? null
+          const memoryPercent =
+            memoryLimitBytes && memoryLimitBytes > 0
+              ? clampPercent((memoryBytes / memoryLimitBytes) * 100)
+              : 0
+          const playersOnline =
+            metrics?.onlinePlayers ??
+            metrics?.playersOnline ??
+            (displayStatus === 'running' ? null : 0)
+          const playersMax = metrics?.maxPlayers ?? metrics?.playersMax ?? null
+          const playersTooltip =
+            playersOnline === null
+              ? `Players unavailable (source: ${metrics?.playersSource ?? 'unavailable'})`
+              : undefined
+          const uptimeDisplay = isRunning ? formatDuration(metrics?.uptimeMs) : '—'
+          const metricsUnavailable = Boolean(metricsError) || metrics?.metricsAvailable === false
+          const highRam = memoryLimitBytes ? memoryPercent > 85 : false
+          const highCpu = cpuPercent > 90
+          return (
+            <article
+              key={instance.id}
+              className={`instance-card${isSelected ? ' instance-card--selected' : ''}${cardDensity === 'compact' ? ' instance-card--compact' : ''}`}
+            >
+              <header className="instance-card__header">
+                <div>
+                  <h2 className="instance-card__title">{instance.name}</h2>
+                  <p className="instance-card__meta">ID: {instance.id}</p>
+                </div>
+                {badgeStatus ? (
+                  <span className={`badge badge--${badgeStatus}`}>{badgeStatus}</span>
+                ) : null}
+              </header>
+
+              <dl className="instance-card__details">
+                <div className="instance-card__detail">
+                  <dt>Server Type</dt>
+                  <dd>{instance.serverType}</dd>
+                </div>
+                <div className="instance-card__detail">
+                  <dt>Minecraft Version</dt>
+                  <dd>{instance.minecraftVersion ?? '—'}</dd>
+                </div>
+                {instance.loader?.version ? (
+                  <div className="instance-card__detail">
+                    <dt>Loader</dt>
+                    <dd>{`${instance.loader.type ?? 'loader'} ${instance.loader.version}`}</dd>
+                  </div>
+                ) : null}
+                <div className="instance-card__detail">
+                  <dt>Status</dt>
+                  <dd>{displayStatus ?? 'unknown'}</dd>
+                </div>
+                <div className="instance-card__detail">
+                  <dt>Port</dt>
+                  <dd>{instance.serverPort ?? '—'}</dd>
+                </div>
+                <div className="instance-card__detail">
+                  <dt>Preparation</dt>
+                  <dd>
+                    {prepareState === 'prepared'
+                      ? 'Prepared'
+                      : prepareState === 'preparing'
+                        ? 'Preparing…'
+                        : prepareState === 'error'
+                          ? 'Error'
+                          : 'Not prepared'}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className={`metrics${!isRunning ? ' metrics--muted' : ''}`}>
+                <div className="metric">
+                  <div className="metric__label">CPU</div>
+                  <div className="metric__value">
+                    {`${clampPercent(cpuPercent).toFixed(1)}%`}
+                    {highCpu ? <span className="badge badge--warning">High CPU</span> : null}
+                  </div>
+                  <div className="progress">
+                    <div className="progress__fill" style={{ width: `${clampPercent(cpuPercent)}%` }} />
+                  </div>
+                  <MiniSparkline values={metricsHistoryByInstanceId[instance.id]?.cpu} title="CPU trend" />
+                </div>
+
+                <div className="metric">
+                  <div className="metric__label">RAM</div>
+                  <div className="metric__value">
+                    {`${formatBytes(memoryBytes)}${
+                      memoryLimitBytes ? ` / ${formatBytes(memoryLimitBytes)}` : ''
+                    }`}
+                    {highRam ? <span className="badge badge--warning">High RAM</span> : null}
+                  </div>
+                  <div className="progress">
+                    <div className="progress__fill" style={{ width: `${memoryLimitBytes ? memoryPercent : 0}%` }} />
+                  </div>
+                  <MiniSparkline
+                    values={metricsHistoryByInstanceId[instance.id]?.memory}
+                    title="RAM trend"
+                  />
+                </div>
+
+                <div className="metric metric--compact">
+                  <div className="metric__label">Players</div>
+                  <div className="metric__value" title={playersTooltip}>
+                    {playersOnline === null ? '—' : playersOnline}/{playersMax ?? '—'}
+                  </div>
+                  <div className="metric__label">Uptime</div>
+                  <div className="metric__value">{uptimeDisplay}</div>
+                  {metricsUnavailable ? (
+                    <span className="badge badge--muted">metrics unavailable</span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="instance-card__actions">
+                <button
+                  className="btn"
+                  disabled={startDisabled}
+                  onClick={() => handleAction(instance.id, 'start')}
+                >
+                  {isActive && activeAction?.type === 'start'
+                    ? 'Starting…'
+                    : 'Start'}
+                </button>
+                <button
+                  className="btn btn--secondary"
+                  disabled={isBusy || displayStatus === 'stopped' || displayStatus === 'unknown'}
+                  onClick={() => handleAction(instance.id, 'stop')}
+                >
+                  {isActive && activeAction?.type === 'stop' ? 'Stopping…' : 'Stop'}
+                </button>
+                {prepareState !== 'prepared' ? (
+                  <button
+                    className="btn btn--ghost"
+                    disabled={prepareDisabled}
+                    onClick={() => triggerPrepare(instance)}
+                  >
+                    {prepareState === 'preparing' ? 'Preparing…' : 'Prepare'}
+                  </button>
+                ) : null}
+              </div>
+
+              {prepareState === 'preparing' ? (
+                <div className="alert alert--muted">Preparing server files…</div>
+              ) : null}
+              {prepareState === 'error' || prepareState === 'not_prepared' ? (
+                <div className="alert alert--error">
+                  {prepareMessage ?? 'Server files are not prepared.'}
+                  <div className="actions actions--inline">
+                    <button
+                      className="btn"
+                      disabled={prepareDisabled}
+                      onClick={() => triggerPrepare(instance)}
+                    >
+                      Retry Prepare
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="instance-card__links">
+                <Link to={`/instances/${instance.id}/console`}>Console</Link>
+                <Link to={`/instances/${instance.id}/files`}>Files</Link>
+                <Link to={`/instances/${instance.id}/properties`}>Properties</Link>
+                <Link to={`/instances/${instance.id}/whitelist`}>Whitelist</Link>
+                <Link to={`/instances/${instance.id}/tasks`}>Scheduled Tasks</Link>
+                <Link to={`/instances/${instance.id}/settings`}>Settings</Link>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
+      {isCreateOpen ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setIsCreateOpen(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal__header">
+              <div>
+                <h2>Create Instance</h2>
+                <p className="page__hint">Spin up a new server quickly</p>
+              </div>
+              <button className="btn btn--ghost" onClick={() => setIsCreateOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <form className="form" onSubmit={handleCreateInstance}>
+              <label className="form__field">
+                <span>Name *</span>
+                <input
+                  type="text"
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  placeholder="My new server"
+                  required
+                />
+              </label>
+
+              <div className="form__inline">
+                <label className="form__field">
+                  <span>Server Type *</span>
+                  <select
+                    value={createServerType}
+                    onChange={(event) => {
+                      const value = event.target.value as ServerType | ''
+                      setCreateServerType(value)
+                      setMinecraftVersion('')
+                      setLoaderVersion('')
+                    }}
+                    required
+                  >
+                    <option value="" disabled>
+                      Select a type
+                    </option>
+                    <option value="vanilla">Vanilla</option>
+                    <option value="paper">Paper</option>
+                    <option value="fabric">Fabric</option>
+                    <option value="forge">Forge</option>
+                    <option value="neoforge">NeoForge</option>
+                  </select>
+                </label>
+
+                <label className="form__field">
+                  <span>Minecraft Version *</span>
+                  <select
+                    value={minecraftVersion}
+                    onChange={(event) => {
+                      setMinecraftVersion(event.target.value)
+                      setLoaderVersion('')
+                    }}
+                    disabled={!createServerType || catalogLoading}
+                    required
+                  >
+                    <option value="" disabled>
+                      {createServerType
+                        ? catalogLoading
+                          ? 'Loading versions…'
+                          : 'Select version'
+                        : 'Choose server type first'}
+                    </option>
+                    {catalogVersions.map((version) => (
+                      <option key={version} value={version}>
+                        {version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {showLoaderSelect ? (
+                <label className="form__field">
+                  <span>Loader Version *</span>
+                  <select
+                    value={loaderVersion}
+                    onChange={(event) => setLoaderVersion(event.target.value)}
+                    disabled={!minecraftVersion}
+                    required={showLoaderSelect}
+                  >
+                    <option value="" disabled>
+                      {minecraftVersion ? 'Select loader version' : 'Pick a Minecraft version first'}
+                    </option>
+                    {loaderOptions.map((version) => (
+                      <option key={version} value={version}>
+                        {version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {catalogLoading ? <div className="alert alert--muted">Loading catalog…</div> : null}
+              {catalogError ? <div className="alert alert--error">{catalogError}</div> : null}
+              {createError ? <div className="alert alert--error">{createError}</div> : null}
+
+              <div className="actions">
+                <button type="button" className="btn btn--ghost" onClick={() => setIsCreateOpen(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn" disabled={createDisabled}>
+                  {creating ? 'Creating…' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+export default Dashboard

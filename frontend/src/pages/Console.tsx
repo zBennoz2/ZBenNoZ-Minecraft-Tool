@@ -1,0 +1,405 @@
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { InstanceStatus, getInstanceStatus, sendCommand } from '../api'
+import { apiUrl } from '../config'
+
+type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+const MAX_LOGS = 2000
+
+const parseLogLine = (data: string): string => {
+  try {
+    const parsed = JSON.parse(data)
+    if (typeof parsed === 'string') return parsed
+    if (parsed && typeof parsed === 'object') {
+      if ('message' in parsed && typeof parsed.message === 'string') {
+        return parsed.message
+      }
+      if ('log' in parsed && typeof (parsed as { log?: unknown }).log === 'string') {
+        return String((parsed as { log?: unknown }).log)
+      }
+    }
+    return JSON.stringify(parsed)
+  } catch (error) {
+    return data
+  }
+}
+
+export function ConsolePage() {
+  const { id } = useParams()
+  const [logs, setLogs] = useState<string[]>([])
+  const [autoScroll, setAutoScroll] = useState(true)
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
+  const [connectionAttempt, setConnectionAttempt] = useState(0)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [command, setCommand] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const [commandError, setCommandError] = useState<string | null>(null)
+  const [instanceStatus, setInstanceStatus] = useState<InstanceStatus['status']>('unknown')
+  const [commandApiMissing, setCommandApiMissing] = useState(false)
+  const [history, setHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const logContainerRef = useRef<HTMLDivElement | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const draftCommandRef = useRef('')
+
+  const historyStorageKey = useMemo(() => (id ? `commandHistory:${id}` : null), [id])
+
+  useEffect(() => {
+    if (!historyStorageKey) return
+
+    try {
+      const stored = localStorage.getItem(historyStorageKey)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')) {
+          setHistory(parsed)
+        }
+      } else {
+        setHistory([])
+      }
+    } catch (error) {
+      console.error('Failed to parse command history', error)
+      setHistory([])
+    }
+
+    setHistoryIndex(-1)
+    setCommand('')
+    draftCommandRef.current = ''
+    setCommandApiMissing(false)
+    setCommandError(null)
+  }, [historyStorageKey])
+
+  const persistHistory = useCallback(
+    (entries: string[]) => {
+      if (!historyStorageKey) return
+      localStorage.setItem(historyStorageKey, JSON.stringify(entries))
+    },
+    [historyStorageKey],
+  )
+
+  const appendLog = useCallback((line: string) => {
+    setLogs((prev) => {
+      const next = [...prev, line]
+      if (next.length > MAX_LOGS) {
+        next.splice(0, next.length - MAX_LOGS)
+      }
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!id) {
+      setConnectionState('disconnected')
+      return undefined
+    }
+
+    setLogs([])
+    setConnectionState((prev) => (prev === 'reconnecting' ? 'reconnecting' : 'connecting'))
+    const url = apiUrl(`/api/instances/${id}/logs/stream`)
+    // eslint-disable-next-line no-console
+    console.log('[api] Requesting', url)
+    const source = new EventSource(url)
+    eventSourceRef.current = source
+
+    const handleMessage = (event: MessageEvent) => {
+      appendLog(parseLogLine(event.data))
+    }
+
+    const handleStatus = (event: MessageEvent) => {
+      setInstanceStatus(String(event.data) as InstanceStatus['status'])
+    }
+
+    source.onopen = () => setConnectionState('connected')
+    source.onmessage = handleMessage
+    source.addEventListener('log', handleMessage as EventListener)
+    source.addEventListener('status', handleStatus as EventListener)
+    source.onerror = () => {
+      setConnectionState('disconnected')
+      source.close()
+      eventSourceRef.current = null
+    }
+
+    return () => {
+      setConnectionState('disconnected')
+      source.close()
+      eventSourceRef.current = null
+    }
+  }, [appendLog, id, connectionAttempt])
+
+  useEffect(() => {
+    if (!id) {
+      setInstanceStatus('unknown')
+      return
+    }
+
+    let cancelled = false
+    getInstanceStatus(id)
+      .then((status) => {
+        if (!cancelled) {
+          setInstanceStatus(status.status ?? 'unknown')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInstanceStatus('unknown')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  useEffect(() => {
+    const container = logContainerRef.current
+    if (!container) return undefined
+
+    const handleScroll = () => {
+      const threshold = 24
+      const atBottom =
+        container.scrollHeight - container.clientHeight - container.scrollTop < threshold
+      setIsAtBottom(atBottom)
+    }
+
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  useEffect(() => {
+    if (!autoScroll || !isAtBottom) return
+    const container = logContainerRef.current
+    if (container) {
+      container.scrollTop = container.scrollHeight
+    }
+  }, [logs, autoScroll, isAtBottom])
+
+  const handleReconnect = () => {
+    if (!id) return
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    setConnectionState('reconnecting')
+    setConnectionAttempt((prev) => prev + 1)
+  }
+
+  const canSendCommand = instanceStatus === 'running' && !commandApiMissing
+
+  const handleHistoryNavigation = useCallback(
+    (direction: 'up' | 'down') => {
+      if (history.length === 0) return
+
+      if (direction === 'up') {
+        setHistoryIndex((prev) => {
+          const nextIndex = prev <= 0 ? history.length - 1 : prev - 1
+          if (prev === -1) {
+            draftCommandRef.current = command
+          }
+          setCommand(history[nextIndex] ?? '')
+          return nextIndex
+        })
+        return
+      }
+
+      setHistoryIndex((prev) => {
+        if (prev === -1) return prev
+        if (prev >= history.length - 1) {
+          setCommand(draftCommandRef.current)
+          return -1
+        }
+
+        const nextIndex = prev + 1
+        setCommand(history[nextIndex] ?? '')
+        return nextIndex
+      })
+    },
+    [command, history],
+  )
+
+  const handleSendCommand = async (commandOverride?: string) => {
+    if (!id) return
+
+    const normalized = (commandOverride ?? command).trim()
+    if (normalized.length === 0) return
+
+    setCommandError(null)
+    setCommandApiMissing(false)
+    setIsSending(true)
+
+    try {
+      await sendCommand(id, normalized)
+      appendLog(`> ${normalized}`)
+      setCommand('')
+      draftCommandRef.current = ''
+      setHistoryIndex(-1)
+      setHistory((prev) => {
+        const next = [...prev, normalized].slice(-50)
+        persistHistory(next)
+        return next
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to send command'
+      const missingApi = /404|not found/i.test(message)
+      setCommandError(missingApi ? 'Command API not implemented' : message)
+      setCommandApiMissing(missingApi)
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  const quickActions = useMemo(
+    () => [
+      { label: 'stop', command: 'stop' },
+      { label: 'save-all', command: 'save-all' },
+      { label: 'list', command: 'list' },
+      { label: 'say Server is restarting…', command: 'say Server is restarting…' },
+    ],
+    [],
+  )
+
+  const handleCommandKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      handleSendCommand()
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      handleHistoryNavigation('up')
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      handleHistoryNavigation('down')
+    }
+  }
+
+  const statusLabel = useMemo(() => {
+    switch (connectionState) {
+      case 'connected':
+        return 'Connected'
+      case 'reconnecting':
+        return 'Reconnecting…'
+      case 'disconnected':
+        return 'Disconnected'
+      default:
+        return 'Connecting…'
+    }
+  }, [connectionState])
+
+  const instanceStatusLabel = useMemo(() => {
+    switch (instanceStatus) {
+      case 'running':
+        return 'Instance running'
+      case 'starting':
+        return 'Instance starting'
+      case 'error':
+        return 'Instance error'
+      case 'stopped':
+        return 'Instance stopped'
+      default:
+        return 'Instance status unknown'
+    }
+  }, [instanceStatus])
+
+  const logsHint = useMemo(() => {
+    if (connectionState === 'disconnected') {
+      return 'Disconnected from log stream. Try reconnecting.'
+    }
+    if (connectionState === 'reconnecting') {
+      return 'Reconnecting to log stream…'
+    }
+    return 'Waiting for logs…'
+  }, [connectionState])
+
+  return (
+    <section className="page">
+      <div className="page__header page__header--spread">
+        <div>
+          <h1>Console</h1>
+          {id ? <span className="page__id">Instance: {id}</span> : null}
+        </div>
+        <div className="console__actions">
+          <span className={`badge badge--${connectionState}`}>{statusLabel}</span>
+          <span className={`badge badge--${instanceStatus}`}>{instanceStatusLabel}</span>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={autoScroll}
+              onChange={(event) => setAutoScroll(event.target.checked)}
+            />
+            Auto-scroll
+          </label>
+          <button className="btn btn--ghost" onClick={handleReconnect} disabled={!id}>
+            Reconnect
+          </button>
+          <button className="btn btn--ghost" onClick={() => setLogs([])}>
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="console__log" ref={logContainerRef}>
+        {logs.length === 0 ? (
+          <p className="page__hint">{logsHint}</p>
+        ) : (
+          logs.map((line, index) => (
+            <pre key={`${index}-${line.slice(0, 6)}`} className="console__line">
+              {line}
+            </pre>
+          ))
+        )}
+      </div>
+
+      <div className="console__panel">
+        <div className="console__quick-actions">
+          <span className="console__quick-label">Quick actions</span>
+          {quickActions.map((action) => (
+            <button
+              key={action.label}
+              className="btn btn--ghost"
+              type="button"
+              disabled={!canSendCommand || isSending}
+              onClick={() => handleSendCommand(action.command)}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+
+        {commandApiMissing ? (
+          <div className="alert alert--error">Command API not implemented</div>
+        ) : null}
+
+        {!canSendCommand ? (
+          <div className="alert alert--muted">Start the server to send commands.</div>
+        ) : null}
+
+        <form
+          className="console__form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            handleSendCommand()
+          }}
+        >
+          <input
+            type="text"
+            className="console__input"
+            placeholder="Command…"
+            value={command}
+            onChange={(event) => setCommand(event.target.value)}
+            onKeyDown={handleCommandKeyDown}
+            disabled={!canSendCommand || isSending}
+          />
+          <button
+            className="btn"
+            type="submit"
+            disabled={!canSendCommand || isSending || command.trim().length === 0}
+          >
+            {isSending ? 'Sending…' : 'Send'}
+          </button>
+        </form>
+
+        {commandError ? <div className="alert alert--error">{commandError}</div> : null}
+      </div>
+    </section>
+  )
+}
+
+export default ConsolePage

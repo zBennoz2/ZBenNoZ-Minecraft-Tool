@@ -1,0 +1,70 @@
+{
+  "name": "minecraft-amp",
+  "private": true,
+  "version": "0.1.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:electron": "cross-env ELECTRON_DEV_URL=http://localhost:5173 wait-on http://localhost:5173 && electron .",
+    "agent:dev": "npm run dev:backend",
+    "desktop:dev": "concurrently -k -r \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "dev": "concurrently -k -r \"npm run agent:dev\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "build": "npm --prefix frontend run build",
+    "build:backend": "npm --prefix backend run build",
+    "sync:frontend": "node -e \"const fs=require('fs');const path=require('path');const src=path.join('frontend','dist');const dest=path.join('backend','frontend','dist');if(!fs.existsSync(src)){console.warn('No frontend dist to sync');process.exit(0);}fs.rmSync(dest,{recursive:true,force:true});fs.mkdirSync(path.dirname(dest),{recursive:true});fs.cpSync(src,dest,{recursive:true});console.log('Synced frontend dist to',dest);\"",
+    "agent:web": "npm run build && npm run build:backend && npm run sync:frontend && node backend/dist/index.js",
+    "dist": "npm run build:backend && npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.minecraft.amp",
+    "productName": "Minecraft AMP",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend/dist",
+        "to": "frontend/dist"
+      },
+      {
+        "from": "backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "backend/package.json",
+        "to": "backend/package.json"
+      }
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "concurrently": "^9.1.0",
+    "electron": "^32.1.2",
+    "electron-builder": "^24.13.3",
+    "wait-on": "^8.0.2"
+  },
+  "dependencies": {}
+}
