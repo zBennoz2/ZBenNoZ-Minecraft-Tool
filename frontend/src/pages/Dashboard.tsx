@@ -7,6 +7,8 @@ import {
   Instance,
   InstanceMetrics,
   InstanceStatus,
+  JavaCandidate,
+  JavaRequirement,
   LoaderType,
   PrepareInstanceOptions,
   ServerType,
@@ -14,13 +16,41 @@ import {
   getCatalogVersions,
   getInstanceMetrics,
   getInstanceStatus,
+  installJava,
   listInstances,
   prepareInstance,
   startInstance,
   stopInstance,
+  streamJavaInstall,
 } from '../api'
+import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 
 type PrepareState = 'not_prepared' | 'preparing' | 'prepared' | 'error'
+
+type CreateGame = '' | 'minecraft' | 'hytale'
+
+type JavaInstallStatus = 'idle' | 'installing' | 'done' | 'error'
+
+interface JavaInstallState {
+  status: JavaInstallStatus
+  major: number
+  progress?: number
+  message?: string
+}
+
+interface JavaRequirementIssue {
+  requirement?: JavaRequirement
+  candidates?: JavaCandidate[]
+  reasons?: string[]
+}
+
+interface JavaInstallEvent {
+  jobId: string
+  phase: 'download' | 'extract' | 'verify' | 'done' | 'error'
+  progress: number
+  message?: string
+  javaPath?: string
+}
 
 interface ActionState {
   id: string
@@ -81,6 +111,25 @@ const MiniSparkline = ({ values, title }: { values?: number[]; title: string }) 
   )
 }
 
+const GAME_TEMPLATES = {
+  minecraft: {
+    label: 'Minecraft Java',
+    description: 'Choose Paper/Fabric/Forge and your Minecraft version.',
+    serverTypes: [
+      { value: 'vanilla', label: 'Vanilla' },
+      { value: 'paper', label: 'Paper' },
+      { value: 'fabric', label: 'Fabric' },
+      { value: 'forge', label: 'Forge' },
+      { value: 'neoforge', label: 'NeoForge' },
+    ] as { value: ServerType; label: string }[],
+  },
+  hytale: {
+    label: 'Hytale',
+    description: 'Prepare the Hytale server with the official downloader or import files.',
+    serverTypes: [{ value: 'hytale', label: 'Hytale' }] as { value: ServerType; label: string }[],
+  },
+}
+
 export function Dashboard() {
   const [instances, setInstances] = useState<Instance[]>([])
   const [loading, setLoading] = useState(false)
@@ -93,6 +142,7 @@ export function Dashboard() {
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
 
   const [createName, setCreateName] = useState('')
+  const [createGame, setCreateGame] = useState<CreateGame>('')
   const [createServerType, setCreateServerType] = useState<ServerType | ''>('')
   const [minecraftVersion, setMinecraftVersion] = useState('')
   const [loaderVersion, setLoaderVersion] = useState('')
@@ -116,6 +166,13 @@ export function Dashboard() {
   const [prepareMessageByInstanceId, setPrepareMessageByInstanceId] = useState<
     Record<string, string | undefined>
   >({})
+  const [prepareJavaIssueByInstanceId, setPrepareJavaIssueByInstanceId] = useState<
+    Record<string, JavaRequirementIssue | undefined>
+  >({})
+  const [javaInstallByInstanceId, setJavaInstallByInstanceId] = useState<
+    Record<string, JavaInstallState | undefined>
+  >({})
+  const javaInstallStreamRef = useRef<Record<string, EventSource>>({})
   const [metricsByInstanceId, setMetricsByInstanceId] = useState<
     Record<string, InstanceMetrics>
   >({})
@@ -132,7 +189,7 @@ export function Dashboard() {
 
   const isBusy = useMemo(() => loading || Boolean(activeAction), [loading, activeAction])
   const isHytale = createServerType === 'hytale'
-  const usesCatalog = Boolean(createServerType) && !isHytale
+  const usesCatalog = createGame === 'minecraft' && Boolean(createServerType) && !isHytale
 
   const requiresLoader = useMemo(
     () =>
@@ -148,7 +205,7 @@ export function Dashboard() {
     [loaderOptions.length, loaderVersionsByMinecraft, requiresLoader],
   )
   const createDisabled = useMemo(() => {
-    if (!createName.trim() || !createServerType) return true
+    if (!createName.trim() || !createGame || !createServerType) return true
     if (!isHytale && !minecraftVersion) return true
     if (isHytale && hytaleInstallMode === 'import') {
       if (!hytaleImportServerPath.trim() || !hytaleImportAssetsPath.trim()) return true
@@ -157,6 +214,7 @@ export function Dashboard() {
     return creating
   }, [
     createName,
+    createGame,
     createServerType,
     creating,
     hytaleImportAssetsPath,
@@ -275,15 +333,100 @@ export function Dashboard() {
     }
 
     updatePrepareState(instance.id, 'preparing')
+    setPrepareJavaIssueByInstanceId((prev) => ({ ...prev, [instance.id]: undefined }))
     const result = await prepareInstance(instance.id, prepareOptions)
 
     if (result.success) {
       updatePrepareState(instance.id, 'prepared', result.message)
+      setPrepareJavaIssueByInstanceId((prev) => ({ ...prev, [instance.id]: undefined }))
+    } else if (result.status === 'needs_java') {
+      updatePrepareState(
+        instance.id,
+        'error',
+        result.message ?? 'Java runtime required to prepare this instance.',
+      )
+      setPrepareJavaIssueByInstanceId((prev) => ({
+        ...prev,
+        [instance.id]: {
+          requirement: result.requirement,
+          candidates: result.candidates,
+          reasons: result.reasons,
+        },
+      }))
     } else {
       updatePrepareState(instance.id, 'error', result.message ?? 'Prepare failed')
     }
 
     await refreshInstanceStatus(instance.id)
+  }
+
+  const startJavaInstall = async (instanceId: string, requirement?: JavaRequirement) => {
+    if (!requirement) return
+    const major = requirement.major
+    const existing = javaInstallStreamRef.current[instanceId]
+    if (existing) {
+      existing.close()
+      delete javaInstallStreamRef.current[instanceId]
+    }
+    setJavaInstallByInstanceId((prev) => ({
+      ...prev,
+      [instanceId]: { status: 'installing', major, progress: 0, message: 'Starting download…' },
+    }))
+    try {
+      const result = await installJava(major)
+      if (result.status === 'already_installed') {
+        setJavaInstallByInstanceId((prev) => ({
+          ...prev,
+          [instanceId]: {
+            status: 'done',
+            major,
+            progress: 100,
+            message: `Java ${major} is already installed. Retry prepare.`,
+          },
+        }))
+        return
+      }
+
+      const jobId = result.jobId
+      if (!jobId) {
+        throw new Error('Java install job not started')
+      }
+
+      const source = streamJavaInstall(jobId, (event) => {
+        try {
+          const data = JSON.parse(event.data) as JavaInstallEvent
+          setJavaInstallByInstanceId((prev) => ({
+            ...prev,
+            [instanceId]: {
+              status: data.phase === 'error' ? 'error' : data.phase === 'done' ? 'done' : 'installing',
+              major,
+              progress: data.progress,
+              message: data.message ?? `Java install ${data.phase}…`,
+            },
+          }))
+          if (data.phase === 'done' || data.phase === 'error') {
+            source.close()
+            delete javaInstallStreamRef.current[instanceId]
+          }
+        } catch (parseError) {
+          console.error('Failed to parse Java install event', parseError)
+        }
+      })
+      javaInstallStreamRef.current[instanceId] = source
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to start Java install'
+      setJavaInstallByInstanceId((prev) => ({
+        ...prev,
+        [instanceId]: { status: 'error', major, message },
+      }))
+    }
+  }
+
+  const buildJavaRequirementMessage = (issue?: JavaRequirementIssue) => {
+    const requirementText = formatJavaRequirement(issue?.requirement)
+    const candidates = formatJavaCandidateList(issue?.candidates)
+    const detail = candidates.join(' ')
+    return `Instance requires ${requirementText}. ${detail} Install the required Java or configure the Java path in Settings.`
   }
 
   const fetchInstances = async () => {
@@ -329,8 +472,13 @@ export function Dashboard() {
       if (type === 'start') {
         const result = await startInstance(id)
         if (result.status === 'needs_java') {
-          const majorText = result.recommendedMajor ? `Java ${result.recommendedMajor}` : 'Java'
-          setError(`Instance requires ${majorText}. Please install the recommended Java runtime and try again.`)
+          setError(
+            buildJavaRequirementMessage({
+              requirement: result.requirement ?? (result.recommendedMajor ? { major: result.recommendedMajor, mode: 'minimum' } : undefined),
+              candidates: result.candidates,
+              reasons: result.reasons,
+            }),
+          )
         } else if (result.status === 'ok') {
           // noop
         }
@@ -359,6 +507,7 @@ export function Dashboard() {
   useEffect(() => {
     return () => {
       Object.values(metricsControllersRef.current).forEach((controller) => controller.abort())
+      Object.values(javaInstallStreamRef.current).forEach((source) => source.close())
     }
   }, [])
 
@@ -414,6 +563,7 @@ export function Dashboard() {
   const handleOpenCreate = () => {
     setIsCreateOpen(true)
     setCreateName('')
+    setCreateGame('')
     setCreateServerType('')
     setMinecraftVersion('')
     setLoaderVersion('')
@@ -467,10 +617,11 @@ export function Dashboard() {
 
     try {
       const created = await createInstance(payload)
-      setIsCreateOpen(false)
-      setSelectedInstanceId(created.id)
-      setCreateName('')
-      setCreateServerType('')
+    setIsCreateOpen(false)
+    setSelectedInstanceId(created.id)
+    setCreateName('')
+    setCreateGame('')
+    setCreateServerType('')
       setMinecraftVersion('')
       setLoaderVersion('')
       setHytaleInstallMode('downloader')
@@ -749,6 +900,46 @@ export function Dashboard() {
               {prepareState === 'error' || prepareState === 'not_prepared' ? (
                 <div className="alert alert--error">
                   {prepareMessage ?? 'Server files are not prepared.'}
+                  {prepareJavaIssueByInstanceId[instance.id] ? (
+                    <div style={{ marginTop: 8 }}>
+                      <div>
+                        {formatJavaRequirement(prepareJavaIssueByInstanceId[instance.id]?.requirement)} is required
+                        for this instance.
+                      </div>
+                      <ul>
+                        {formatJavaCandidateList(prepareJavaIssueByInstanceId[instance.id]?.candidates).map(
+                          (line) => (
+                            <li key={line}>{line}</li>
+                          ),
+                        )}
+                      </ul>
+                      <div className="page__hint">
+                        Install the required Java version or set a Java Path in Settings. After installation, retry
+                        prepare.
+                      </div>
+                      <div className="actions actions--inline" style={{ marginTop: 8 }}>
+                        <button
+                          className="btn btn--secondary"
+                          onClick={() =>
+                            startJavaInstall(instance.id, prepareJavaIssueByInstanceId[instance.id]?.requirement)
+                          }
+                          disabled={javaInstallByInstanceId[instance.id]?.status === 'installing'}
+                        >
+                          {javaInstallByInstanceId[instance.id]?.status === 'installing'
+                            ? 'Installing…'
+                            : `Install ${formatJavaRequirement(prepareJavaIssueByInstanceId[instance.id]?.requirement)}`}
+                        </button>
+                        {javaInstallByInstanceId[instance.id]?.message ? (
+                          <span className="page__hint">{javaInstallByInstanceId[instance.id]?.message}</span>
+                        ) : null}
+                      </div>
+                      {javaInstallByInstanceId[instance.id]?.status === 'installing' ? (
+                        <div className="page__hint">
+                          Progress: {javaInstallByInstanceId[instance.id]?.progress ?? 0}%
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="actions actions--inline">
                     <button
                       className="btn"
@@ -799,38 +990,65 @@ export function Dashboard() {
                 />
               </label>
 
-              <div className="form__inline">
-                <label className="form__field">
-                  <span>Server Type *</span>
-                  <select
-                    value={createServerType}
-                    onChange={(event) => {
-                      const value = event.target.value as ServerType | ''
-                      setCreateServerType(value)
-                      setMinecraftVersion('')
-                      setLoaderVersion('')
-                      if (value === 'hytale') {
-                        setHytaleInstallMode('downloader')
-                        setHytaleDownloaderUrl('')
-                        setHytaleImportServerPath('')
-                        setHytaleImportAssetsPath('')
-                      }
-                    }}
-                    required
-                  >
-                    <option value="" disabled>
-                      Select a type
-                    </option>
-                    <option value="vanilla">Vanilla</option>
-                    <option value="paper">Paper</option>
-                    <option value="fabric">Fabric</option>
-                    <option value="forge">Forge</option>
-                    <option value="neoforge">NeoForge</option>
-                    <option value="hytale">Hytale</option>
-                  </select>
-                </label>
+              <label className="form__field">
+                <span>Game *</span>
+                <select
+                  value={createGame}
+                  onChange={(event) => {
+                    const value = event.target.value as CreateGame
+                    setCreateGame(value)
+                    setMinecraftVersion('')
+                    setLoaderVersion('')
+                    if (value === 'hytale') {
+                      setCreateServerType('hytale')
+                      setHytaleInstallMode('downloader')
+                      setHytaleDownloaderUrl('')
+                      setHytaleImportServerPath('')
+                      setHytaleImportAssetsPath('')
+                    } else {
+                      setCreateServerType('')
+                    }
+                  }}
+                  required
+                >
+                  <option value="" disabled>
+                    Select a game
+                  </option>
+                  <option value="minecraft">{GAME_TEMPLATES.minecraft.label}</option>
+                  <option value="hytale">{GAME_TEMPLATES.hytale.label}</option>
+                </select>
+                {createGame ? (
+                  <small className="page__hint">{GAME_TEMPLATES[createGame].description}</small>
+                ) : null}
+              </label>
 
-                {!isHytale ? (
+              <div className="form__inline">
+                {createGame === 'minecraft' ? (
+                  <label className="form__field">
+                    <span>Server Type *</span>
+                    <select
+                      value={createServerType}
+                      onChange={(event) => {
+                        const value = event.target.value as ServerType | ''
+                        setCreateServerType(value)
+                        setMinecraftVersion('')
+                        setLoaderVersion('')
+                      }}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select a type
+                      </option>
+                      {GAME_TEMPLATES.minecraft.serverTypes.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                {createGame === 'minecraft' ? (
                   <label className="form__field">
                     <span>Minecraft Version *</span>
                     <select
@@ -856,11 +1074,11 @@ export function Dashboard() {
                       ))}
                     </select>
                   </label>
-                ) : (
+                ) : createGame === 'hytale' ? (
                   <div className="alert alert--muted">
-                    Hytale uses the default UDP port 5520. Configure additional settings after creation.
+                    Hytale requires Java 25 and uses the default UDP port 5520. Configure additional settings after creation.
                   </div>
-                )}
+                ) : null}
               </div>
 
               {isHytale ? (

@@ -18,6 +18,13 @@ export interface JavaCandidate {
   versionRaw?: string
 }
 
+export type JavaRequirementMode = 'minimum' | 'exact'
+
+export interface JavaRequirement {
+  major: number
+  mode: JavaRequirementMode
+}
+
 export interface JavaInstallEvent {
   jobId: string
   phase: 'download' | 'extract' | 'verify' | 'done' | 'error'
@@ -38,6 +45,12 @@ export const getRecommendedJavaMajor = (mcVersion: string, serverType?: string):
   if (/^1\.20\.([0-4]|[0-4]\d)(\.|$)/.test(normalized)) return 17
   if (/^1\.18(\.|$)/.test(normalized)) return 17
   return 17
+}
+
+export const getJavaRequirement = (mcVersion: string, serverType?: string): JavaRequirement => {
+  const major = getRecommendedJavaMajor(mcVersion, serverType)
+  const mode: JavaRequirementMode = serverType === 'hytale' ? 'exact' : 'minimum'
+  return { major, mode }
 }
 
 const parseJavaVersion = async (javaPath: string) => {
@@ -341,17 +354,26 @@ export const resolveJavaForInstance = async (
   mcVersion?: string,
   serverType?: string,
 ) => {
-  const recommendedMajor = getRecommendedJavaMajor(mcVersion ?? instance.minecraftVersion ?? '', serverType ?? instance.serverType)
+  const requirement = getJavaRequirement(
+    mcVersion ?? instance.minecraftVersion ?? '',
+    serverType ?? instance.serverType,
+  )
+  const recommendedMajor = requirement.major
   const candidates = await detectJavaCandidates()
 
   const javaConfig: JavaConfig = instance.java ?? {}
   const strategy = javaConfig.strategy ?? 'auto'
   const reasons: string[] = []
 
+  const isCompatible = (major: number) =>
+    requirement.mode === 'exact' ? major === requirement.major : major >= requirement.major
+  const requirementText =
+    requirement.mode === 'exact' ? `Java ${requirement.major}` : `Java ${requirement.major}+`
+
   const logNeedsJava = () => {
     if (process.env.NODE_ENV !== 'production') {
       console.debug('[java] NEEDS_JAVA', {
-        recommendedMajor,
+        requirement,
         strategy,
         candidateCount: candidates.length,
         reasons,
@@ -366,8 +388,8 @@ export const resolveJavaForInstance = async (
       reasons.push(`Invalid Java binary at ${customPath}`)
       return null
     }
-    if (parsed.major < recommendedMajor) {
-      reasons.push(`Java at ${customPath} is version ${parsed.major}, below recommended ${recommendedMajor}`)
+    if (!isCompatible(parsed.major)) {
+      reasons.push(`Java at ${customPath} is version ${parsed.major}, requires ${requirementText}`)
       return null
     }
     return parsed
@@ -382,7 +404,7 @@ export const resolveJavaForInstance = async (
   const allowedSources = strategy === 'auto' ? ['system', 'managed'] : [strategy]
   const filteredCandidates = candidates
     .filter((c) => allowedSources.includes(c.source))
-    .filter((c) => c.major >= recommendedMajor)
+    .filter((c) => isCompatible(c.major))
     .sort((a, b) => a.major - b.major)
 
   for (const candidate of filteredCandidates) {
@@ -391,8 +413,8 @@ export const resolveJavaForInstance = async (
       reasons.push(`Failed to parse Java version for ${candidate.path}`)
       continue
     }
-    if (parsed.major < recommendedMajor) {
-      reasons.push(`Java at ${candidate.path} is version ${parsed.major}, below recommended ${recommendedMajor}`)
+    if (!isCompatible(parsed.major)) {
+      reasons.push(`Java at ${candidate.path} is version ${parsed.major}, requires ${requirementText}`)
       continue
     }
 
@@ -403,5 +425,5 @@ export const resolveJavaForInstance = async (
   reasons.push('No Java candidate matched strategy and version requirements')
   logNeedsJava()
 
-  return { status: 'needs_java' as const, recommendedMajor, candidates }
+  return { status: 'needs_java' as const, requirement, recommendedMajor, candidates, reasons }
 }

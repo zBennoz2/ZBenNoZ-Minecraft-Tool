@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   Instance,
   InstanceStartupConfig,
@@ -16,6 +16,7 @@ import {
   startInstance,
   stopInstance,
   updateInstance,
+  deleteInstance,
   getSleepSettings,
   updateSleepSettings,
   getSleepStatus,
@@ -28,6 +29,7 @@ import {
 } from '../api'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
 import BackButton from '../components/BackButton'
+import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 
 interface SettingsFormState {
   name: string
@@ -144,6 +146,7 @@ const formatBytes = (size: number) => {
 
 export function SettingsPage() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [restartState, setRestartState] = useState<'idle' | 'stopping' | 'starting' | 'error'>(
@@ -178,6 +181,10 @@ export function SettingsPage() {
   const [hytaleVersionError, setHytaleVersionError] = useState<string | null>(null)
   const [hytaleChecking, setHytaleChecking] = useState(false)
   const [hytaleUpdating, setHytaleUpdating] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const isDirty = useMemo(() => {
     if (!form || !initialForm) return false
@@ -555,8 +562,13 @@ export function SettingsPage() {
       setRestartState('starting')
       const startResult = await startInstance(id)
       if (startResult.status === 'needs_java') {
+        const requirementText = formatJavaRequirement(
+          startResult.requirement ??
+            (startResult.recommendedMajor ? { major: startResult.recommendedMajor, mode: 'minimum' } : undefined),
+        )
+        const candidates = formatJavaCandidateList(startResult.candidates).join(' ')
         throw new Error(
-          `Instance requires Java ${startResult.recommendedMajor ?? ''}. Please install the recommended runtime and try again.`,
+          `Instance requires ${requirementText}. ${candidates} Install the required Java or update the Java Path.`,
         )
       }
       await refreshStatus()
@@ -568,6 +580,27 @@ export function SettingsPage() {
       setRestartState('error')
       setSaveError(message)
     }
+  }
+
+  const handleDeleteInstance = async () => {
+    if (!id) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteInstance(id)
+      navigate('/')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete instance'
+      setDeleteError(message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const closeDeleteModal = () => {
+    setDeleteOpen(false)
+    setDeleteConfirm('')
+    setDeleteError(null)
   }
 
   if (!id) {
@@ -1022,7 +1055,68 @@ export function SettingsPage() {
             </div>
           )}
         </FormSection>
+
+        <FormSection
+          title="Danger Zone"
+          description="Deleting an instance removes its configuration, server files, logs, and backups."
+          actions={
+            <button
+              className="btn btn--danger"
+              onClick={() => {
+                setDeleteConfirm('')
+                setDeleteError(null)
+                setDeleteOpen(true)
+              }}
+            >
+              Delete instance
+            </button>
+          }
+        >
+          {deleteError ? <div className="alert alert--error">{deleteError}</div> : null}
+        </FormSection>
       </div>
+
+      {deleteOpen ? (
+        <div className="modal-backdrop" role="presentation" onClick={closeDeleteModal}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="modal__header">
+              <div>
+                <h2>Delete instance</h2>
+                <p className="page__hint">
+                  Type <strong>{instanceSnapshot?.name}</strong> to confirm deletion.
+                </p>
+              </div>
+              <button className="btn btn--ghost" onClick={closeDeleteModal}>
+                Close
+              </button>
+            </div>
+            <div className="form">
+              <label className="form__field">
+                <span>Confirmation</span>
+                <input
+                  type="text"
+                  value={deleteConfirm}
+                  onChange={(event) => setDeleteConfirm(event.target.value)}
+                  placeholder={instanceSnapshot?.name ?? ''}
+                />
+              </label>
+              {deleteError ? <div className="alert alert--error">{deleteError}</div> : null}
+              <div className="actions">
+                <button className="btn btn--ghost" onClick={closeDeleteModal}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn--danger"
+                  onClick={handleDeleteInstance}
+                  disabled={deleting || deleteConfirm.trim() !== instanceSnapshot?.name}
+                >
+                  {deleting ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

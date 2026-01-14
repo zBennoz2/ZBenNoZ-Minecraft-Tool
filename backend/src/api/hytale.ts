@@ -8,7 +8,7 @@ import {
   installFromDownloader,
   verifyJavaMajor,
 } from '../services/hytaleInstaller.service';
-import { resolveJavaForInstance } from '../services/java.service';
+import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -69,14 +69,27 @@ router.post('/:id/hytale/update', async (req: Request, res: Response) => {
     if (resolved.status !== 'resolved') {
       return res.status(409).json({
         error: 'NEEDS_JAVA',
-        recommendedMajor: resolved.recommendedMajor,
+        recommendedMajor: resolved.requirement.major,
+        requirement: resolved.requirement,
         candidates: resolved.candidates,
+        reasons: resolved.reasons,
       });
     }
-    await verifyJavaMajor(resolved.javaBin, 25);
+    const requirement = getJavaRequirement('', 'hytale');
+    try {
+      await verifyJavaMajor(resolved.javaBin, requirement.major);
+    } catch (error: any) {
+      return res.status(409).json({
+        error: 'NEEDS_JAVA',
+        recommendedMajor: requirement.major,
+        requirement,
+        candidates: resolved.candidates,
+        detail: error?.message ?? `Java ${requirement.major} required`,
+      });
+    }
   } catch (error: any) {
     console.error('Java verification failed for Hytale update', error);
-    return res.status(500).json({ error: error?.message ?? 'Java 25 verification failed' });
+    return res.status(500).json({ error: error?.message ?? 'Java verification failed' });
   }
 
   try {

@@ -79,6 +79,16 @@ export class LogStreamService {
     }
   }
 
+  clearInstance(instanceId: string): void {
+    const emitter = this.emitters.get(instanceId);
+    if (emitter) {
+      emitter.removeAllListeners('log');
+      emitter.removeAllListeners('status');
+      this.emitters.delete(instanceId);
+    }
+    this.remainders.delete(instanceId);
+  }
+
   private getOrCreateEmitter(instanceId: string): InstanceEventEmitter {
     const existing = this.emitters.get(instanceId);
     if (existing) return existing;

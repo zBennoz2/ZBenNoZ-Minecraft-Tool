@@ -299,15 +299,35 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
 
   let javaBin: string | null = null;
   try {
-    const resolved = await resolveJavaForInstance(instance, minecraftVersion ?? instance.minecraftVersion ?? '', serverType);
+    const resolved = await resolveJavaForInstance(
+      instance,
+      minecraftVersion ?? instance.minecraftVersion ?? '',
+      serverType,
+    );
     if (resolved.status === 'needs_java') {
       return res.status(409).json({
         error: 'NEEDS_JAVA',
-        recommendedMajor: resolved.recommendedMajor,
+        recommendedMajor: resolved.requirement.major,
+        requirement: resolved.requirement,
         candidates: resolved.candidates,
+        reasons: resolved.reasons,
       });
     }
     javaBin = resolved.javaBin;
+    if (serverType === 'hytale') {
+      try {
+        await verifyJavaMajor(javaBin || 'java', resolved.requirement.major);
+      } catch (error: any) {
+        await logPrepare(id, `Java ${resolved.requirement.major} required. ${error?.message ?? 'Check failed.'}`);
+        return res.status(409).json({
+          error: 'NEEDS_JAVA',
+          recommendedMajor: resolved.requirement.major,
+          requirement: resolved.requirement,
+          candidates: resolved.candidates,
+          detail: error?.message ?? `Java ${resolved.requirement.major} required`,
+        });
+      }
+    }
   } catch (error: any) {
     if (error instanceof InstanceActionError) {
       return res.status(error.status).json(error.body);
@@ -343,7 +363,6 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       );
     } else if (serverType === 'hytale') {
       const mode = hytaleInstallMode ?? instance.hytale?.install?.mode ?? 'downloader';
-      await verifyJavaMajor(javaBin || 'java', 25);
       if (mode === 'downloader') {
         await logPrepare(id, 'Installing Hytale server via Downloader CLI');
         await installFromDownloader(

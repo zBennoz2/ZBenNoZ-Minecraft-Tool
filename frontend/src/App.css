@@ -217,6 +217,17 @@ body {
   box-shadow: none;
 }
 
+.btn--danger {
+  background: linear-gradient(135deg, #ff6b6b 0%, #d64545 100%);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  color: #1a0404;
+  box-shadow: 0 12px 22px rgba(255, 107, 107, 0.25);
+}
+
+.btn--danger:hover:not(:disabled) {
+  box-shadow: 0 16px 26px rgba(255, 107, 107, 0.3);
+}
+
 .btn--pill {
   border-radius: 999px;
   padding-inline: var(--space-3);

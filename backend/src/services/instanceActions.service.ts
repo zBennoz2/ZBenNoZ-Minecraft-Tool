@@ -189,12 +189,18 @@ export class InstanceActionService {
     }
 
     emitInstanceEvent('starting', id)
-    const javaResolution = await resolveJavaForInstance(instance, instance.minecraftVersion ?? '', instance.serverType)
+    const javaResolution = await resolveJavaForInstance(
+      instance,
+      instance.minecraftVersion ?? '',
+      instance.serverType,
+    )
     if (javaResolution.status !== 'resolved') {
       throw new InstanceActionError(409, {
         error: 'NEEDS_JAVA',
-        recommendedMajor: javaResolution.recommendedMajor,
+        recommendedMajor: javaResolution.requirement.major,
+        requirement: javaResolution.requirement,
         candidates: javaResolution.candidates,
+        reasons: javaResolution.reasons,
       })
     }
 
@@ -286,12 +292,18 @@ export class InstanceActionService {
     emitInstanceEvent('stopped', id)
     setStopInProgress(id, false)
     emitInstanceEvent('starting', id)
-    const javaResolution = await resolveJavaForInstance(instance, instance.minecraftVersion ?? '', instance.serverType)
+    const javaResolution = await resolveJavaForInstance(
+      instance,
+      instance.minecraftVersion ?? '',
+      instance.serverType,
+    )
     if (javaResolution.status !== 'resolved') {
       throw new InstanceActionError(409, {
         error: 'NEEDS_JAVA',
-        recommendedMajor: javaResolution.recommendedMajor,
+        recommendedMajor: javaResolution.requirement.major,
+        requirement: javaResolution.requirement,
         candidates: javaResolution.candidates,
+        reasons: javaResolution.reasons,
       })
     }
 

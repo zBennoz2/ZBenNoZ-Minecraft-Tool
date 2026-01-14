@@ -142,6 +142,11 @@ export interface JavaCandidate {
   versionRaw?: string
 }
 
+export interface JavaRequirement {
+  major: number
+  mode: 'minimum' | 'exact'
+}
+
 export interface SystemOverview {
   cpu: { usedPercent: number | null }
   memory: {
@@ -184,6 +189,11 @@ export interface PrepareInstanceOptions {
 export interface PrepareInstanceResult {
   success: boolean
   message?: string
+  status?: 'needs_java'
+  recommendedMajor?: number
+  requirement?: JavaRequirement
+  candidates?: JavaCandidate[]
+  reasons?: string[]
 }
 
 export type InstanceUpdatePayload = Partial<
@@ -325,7 +335,13 @@ export async function getInstanceMetrics(
 
 export type StartInstanceResult =
   | { status: 'ok' }
-  | { status: 'needs_java'; recommendedMajor?: number; candidates?: unknown }
+  | {
+      status: 'needs_java'
+      recommendedMajor?: number
+      requirement?: JavaRequirement
+      candidates?: JavaCandidate[]
+      reasons?: string[]
+    }
 
 export async function startInstance(id: string): Promise<StartInstanceResult> {
   const url = apiUrl(`/api/instances/${id}/start`)
@@ -341,12 +357,20 @@ export async function startInstance(id: string): Promise<StartInstanceResult> {
   }
 
   if (!response.ok) {
-    const body = (payload ?? {}) as { error?: string; recommendedMajor?: number; candidates?: unknown }
+    const body = (payload ?? {}) as {
+      error?: string
+      recommendedMajor?: number
+      requirement?: JavaRequirement
+      candidates?: JavaCandidate[]
+      reasons?: string[]
+    }
     if ((response.status === 409 || response.status === 422) && body.error === 'NEEDS_JAVA') {
       return {
         status: 'needs_java',
         recommendedMajor: body.recommendedMajor,
+        requirement: body.requirement,
         candidates: body.candidates,
+        reasons: body.reasons,
       }
     }
 
@@ -393,23 +417,59 @@ export async function prepareInstance(
   id: string,
   options: PrepareInstanceOptions,
 ): Promise<PrepareInstanceResult> {
-  try {
-    const response = await fetchApi<{ message?: string }>(
-      `/api/instances/${id}/prepare`,
-      {
-        method: 'POST',
-        body: JSON.stringify(options),
-      },
-    )
+  const response = await fetch(apiUrl(`/api/instances/${id}/prepare`), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),
+    },
+    body: JSON.stringify(options),
+  })
 
-    return {
-      success: true,
-      message: response.message ?? 'Prepared successfully',
-    }
+  let payload: unknown
+  try {
+    payload = await response.json()
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Prepare failed'
-    return { success: false, message }
+    payload = undefined
   }
+
+  if (response.ok) {
+    const body = (payload ?? {}) as { message?: string }
+    return { success: true, message: body.message ?? 'Prepared successfully' }
+  }
+
+  const body = (payload ?? {}) as {
+    error?: string
+    message?: string
+    recommendedMajor?: number
+    requirement?: JavaRequirement
+    candidates?: JavaCandidate[]
+    reasons?: string[]
+  }
+
+  if ((response.status === 409 || response.status === 422) && body.error === 'NEEDS_JAVA') {
+    return {
+      success: false,
+      status: 'needs_java',
+      message: body.message ?? 'Java runtime required',
+      recommendedMajor: body.recommendedMajor,
+      requirement: body.requirement,
+      candidates: body.candidates,
+      reasons: body.reasons,
+    }
+  }
+
+  const errorMessage =
+    typeof body.message === 'string'
+      ? body.message
+      : typeof body.error === 'string'
+        ? body.error
+        : `Request failed with status ${response.status}`
+  return { success: false, message: errorMessage }
+}
+
+export async function deleteInstance(id: string): Promise<void> {
+  await fetchApi<void>(`/api/instances/${id}`, { method: 'DELETE' })
 }
 
 export async function getJavaRecommendation(

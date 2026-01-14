@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { InstanceManager } from '../core/InstanceManager';
 import { InstanceConfig, ServerType } from '../core/types';
 import { resolveServerPortForInstance } from '../services/serverProperties.service';
+import { deleteInstanceWithCleanup } from '../services/instanceDeletion.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -81,14 +82,14 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
-    const deleted = await instanceManager.deleteInstance(req.params.id);
-    if (!deleted) {
+    const result = await deleteInstanceWithCleanup(req.params.id);
+    if (result.status === 'not_found') {
       return res.status(404).json({ error: 'Instance not found' });
     }
     res.status(204).send();
   } catch (error) {
     console.error(`Error deleting instance ${req.params.id}`, error);
-    res.status(500).json({ error: 'Failed to delete instance' });
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to delete instance' });
   }
 });
 
