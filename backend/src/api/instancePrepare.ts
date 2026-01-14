@@ -383,13 +383,14 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       );
     } else if (serverType === 'hytale') {
       const mode = hytaleInstallMode ?? instance.hytale?.install?.mode ?? 'downloader';
+      let installResult;
       if (mode === 'downloader') {
         await logPrepare(id, 'Installing Hytale server via Downloader CLI');
         const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
         const instanceDownloaderUrl = normalizeOptionalString(
           hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
         );
-        await installFromDownloader(
+        installResult = await installFromDownloader(
           id,
           {
             mode,
@@ -398,13 +399,15 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
               global: globalDownloaderUrl,
               env: process.env.HYTALE_DOWNLOADER_URL,
             },
+            patchline: instance.hytale?.install?.patchline,
+            skipUpdateCheck: instance.hytale?.install?.skipUpdateCheck,
             overwrite,
           },
           (message) => logPrepare(id, message),
         );
       } else if (mode === 'import') {
         await logPrepare(id, 'Importing existing Hytale server files');
-        await installFromImport(id, {
+        installResult = await installFromImport(id, {
           mode,
           importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
           importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
@@ -417,15 +420,18 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       await instanceManager.updateInstance(id, {
         serverType: 'hytale',
         minecraftVersion: undefined,
-        serverJar: 'HytaleServer.jar',
+        serverJar: installResult?.serverJar,
         startup: { mode: 'jar' },
         hytale: {
           ...(instance.hytale ?? {}),
+          assetsPath: installResult?.assetsPath ?? instance.hytale?.assetsPath,
           install: {
             mode,
             downloaderUrl: normalizeOptionalString(
               hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
             ),
+            patchline: instance.hytale?.install?.patchline,
+            skipUpdateCheck: instance.hytale?.install?.skipUpdateCheck,
             importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
             importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
           },

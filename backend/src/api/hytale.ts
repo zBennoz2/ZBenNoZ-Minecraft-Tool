@@ -101,7 +101,7 @@ router.post('/:id/hytale/update', async (req: Request, res: Response) => {
   try {
     const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
     await logPanel(instance.id, 'Updating Hytale server via Downloader CLI');
-    await installFromDownloader(
+    const installResult = await installFromDownloader(
       instance.id,
       {
         mode: 'downloader',
@@ -110,10 +110,19 @@ router.post('/:id/hytale/update', async (req: Request, res: Response) => {
           global: globalDownloaderUrl,
           env: process.env.HYTALE_DOWNLOADER_URL,
         },
+        patchline: instance.hytale?.install?.patchline,
+        skipUpdateCheck: instance.hytale?.install?.skipUpdateCheck,
         overwrite: true,
       },
       (message) => logPanel(instance.id, message),
     );
+    await instanceManager.updateInstance(instance.id, {
+      serverJar: installResult.serverJar,
+      hytale: {
+        ...(instance.hytale ?? {}),
+        assetsPath: installResult.assetsPath,
+      },
+    });
     await logPanel(instance.id, 'Hytale update finished');
     res.json({ ok: true });
   } catch (error: any) {

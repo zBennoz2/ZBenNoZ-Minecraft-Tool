@@ -70,7 +70,6 @@ export function ConsolePage() {
   const [hytaleAuth, setHytaleAuth] = useState<HytaleAuthInfo | null>(null)
   const [hytaleAuthError, setHytaleAuthError] = useState<string | null>(null)
   const [hytaleAuthLoading, setHytaleAuthLoading] = useState(false)
-  const [hytaleCommandSending, setHytaleCommandSending] = useState(false)
   const [commandApiMissing, setCommandApiMissing] = useState(false)
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -356,21 +355,6 @@ export function ConsolePage() {
     }
   }
 
-  const handleHytaleDeviceAuth = async () => {
-    if (!id) return
-    setHytaleCommandSending(true)
-    setHytaleAuthError(null)
-    try {
-      await sendCommand(id, '/auth login device')
-      appendLog('> /auth login device')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to send auth command'
-      setHytaleAuthError(message)
-    } finally {
-      setHytaleCommandSending(false)
-    }
-  }
-
   const quickActions = useMemo(
     () => [
       { label: 'stop', command: 'stop' },
@@ -475,11 +459,12 @@ export function ConsolePage() {
               )}
             </div>
             <p className="page__hint">
-              Run <code>/auth login device</code> in the server console, then confirm the code at{' '}
+              The downloader will prompt for device login during Prepare. Follow the URL/code shown in
+              the logs and complete OAuth at{' '}
               <a href="https://accounts.hytale.com/device" target="_blank" rel="noreferrer">
                 accounts.hytale.com/device
               </a>
-              . Limit: 100 servers per license.
+              . Credentials are reused for subsequent prepares.
             </p>
             {hytaleAuthLoading ? <div className="page__hint">Loading auth status…</div> : null}
             {hytaleAuthError ? <div className="alert alert--error">{hytaleAuthError}</div> : null}
@@ -497,13 +482,6 @@ export function ConsolePage() {
               </div>
             ) : null}
             <div className="actions actions--inline">
-              <button
-                className="btn"
-                onClick={handleHytaleDeviceAuth}
-                disabled={hytaleCommandSending || instanceStatus !== 'running'}
-              >
-                {hytaleCommandSending ? 'Sending…' : 'Console Quick Command'}
-              </button>
               <button
                 className="btn btn--secondary"
                 type="button"

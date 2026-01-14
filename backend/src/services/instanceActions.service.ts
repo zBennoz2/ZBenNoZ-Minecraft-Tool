@@ -11,6 +11,7 @@ import { processManager } from './processManager.service'
 import { logStreamService } from './logStream.service'
 import { getRuntimeInfo, setStopInProgress, updateStatus } from './runtimeState.service'
 import { resolveJavaForInstance } from './java.service'
+import { detectHytaleAssetsZip, detectHytaleServerJar } from './hytaleInstaller.service'
 import { emitInstanceEvent } from '../core/InstanceEvents'
 
 const logService = new LogService()
@@ -97,17 +98,25 @@ const ensureStartupTarget = async (id: string, instance: InstanceConfig) => {
 
 const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
   const serverDir = getInstanceServerDir(id)
-  const jarFileName = instance.serverJar && instance.serverJar.trim() ? instance.serverJar : 'HytaleServer.jar'
-  const jarPath = path.join(serverDir, jarFileName)
-  const assetsPath = path.join(serverDir, instance.hytale?.assetsPath ?? 'Assets.zip')
+  const jarFileName = instance.serverJar?.trim()
+  const jarPath = jarFileName ? path.join(serverDir, jarFileName) : null
+  const assetsConfigPath = instance.hytale?.assetsPath ?? 'Assets.zip'
+  const assetsPath = path.join(serverDir, assetsConfigPath)
 
   try {
+    if (!jarPath) {
+      throw Object.assign(new Error('Hytale server jar not configured'), { code: 'ENOENT' })
+    }
     await fs.access(jarPath)
   } catch (error: any) {
     if (error.code === 'ENOENT') {
+      const detectedJar = await detectHytaleServerJar(serverDir)
       throw new InstanceActionError(409, {
-        error: `Hytale server jar not found. Expected ${jarFileName} in ${serverDir}.`,
-        expectedJar: jarFileName,
+        error: jarFileName
+          ? `Hytale server jar not found. Expected ${jarFileName} in ${serverDir}.`
+          : 'Hytale server jar not configured. Run prepare to download game.zip.',
+        expectedJar: jarFileName ?? undefined,
+        detectedJar: detectedJar ?? undefined,
         serverDir,
       })
     }
@@ -118,9 +127,11 @@ const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
     await fs.access(assetsPath)
   } catch (error: any) {
     if (error.code === 'ENOENT') {
+      const detectedAssets = await detectHytaleAssetsZip(serverDir)
       throw new InstanceActionError(409, {
-        error: `Assets.zip not found. Expected Assets.zip in ${serverDir}.`,
+        error: `Assets.zip not found. Expected ${assetsConfigPath} in ${serverDir}.`,
         expectedAssets: assetsPath,
+        detectedAssets: detectedAssets ?? undefined,
         serverDir,
       })
     }

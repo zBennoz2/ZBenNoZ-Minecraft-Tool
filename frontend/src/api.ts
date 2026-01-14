@@ -9,6 +9,8 @@ export type HytaleInstallMode = 'downloader' | 'import'
 export interface HytaleInstallConfig {
   mode?: HytaleInstallMode
   downloaderUrl?: string
+  patchline?: string
+  skipUpdateCheck?: boolean
   importServerPath?: string
   importAssetsPath?: string
 }

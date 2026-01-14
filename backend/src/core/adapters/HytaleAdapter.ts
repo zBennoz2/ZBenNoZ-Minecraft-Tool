@@ -6,7 +6,6 @@ import { StartSpec } from '../StartSpec';
 export const HYTALE_DEFAULT_PORT = 5520;
 export const HYTALE_DEFAULT_BIND = '0.0.0.0';
 export const HYTALE_DEFAULT_ASSETS = 'Assets.zip';
-export const HYTALE_DEFAULT_JAR = 'HytaleServer.jar';
 
 export const HYTALE_DATA_DIRS = [
   'universe',
@@ -38,7 +37,10 @@ export const HytaleAdapter = {
     const bind = hytale.bind ?? HYTALE_DEFAULT_BIND;
     const assetsPath = hytale.assetsPath ?? HYTALE_DEFAULT_ASSETS;
     const authMode = hytale.authMode ?? 'authenticated';
-    const jar = instance.serverJar && instance.serverJar.trim().length > 0 ? instance.serverJar : HYTALE_DEFAULT_JAR;
+    const jar = instance.serverJar?.trim();
+    if (!jar) {
+      throw new Error('Hytale server jar not configured. Run prepare to download game.zip.');
+    }
 
     const args: string[] = [];
     const memory = instance.memory ?? {};

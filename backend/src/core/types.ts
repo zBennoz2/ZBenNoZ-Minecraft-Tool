@@ -26,6 +26,8 @@ export type HytaleAuthMode = 'authenticated' | 'offline';
 export interface HytaleInstallConfig {
   mode?: 'downloader' | 'import';
   downloaderUrl?: string;
+  patchline?: string;
+  skipUpdateCheck?: boolean;
   importServerPath?: string;
   importAssetsPath?: string;
 }

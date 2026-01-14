@@ -842,7 +842,8 @@ export function SettingsPage() {
               />
             </FormRow>
             <div className="page__hint">
-              Auth: Nach dem ersten Start im Console-Tab <code>/auth login device</code> ausführen und den Code auf accounts.hytale.com/device bestätigen.
+              OAuth: Beim ersten Prepare zeigt der Downloader eine Device-URL + Code in den Logs an.
+              Den Code auf accounts.hytale.com/device bestätigen. Danach werden die Credentials wiederverwendet.
             </div>
           </FormSection>
         ) : null}

@@ -9,8 +9,8 @@ const HYTALE_DOWNLOADER_ENV = 'HYTALE_DOWNLOADER_URL';
 const HYTALE_DOWNLOADER_ARCHIVE = 'hytale-downloader.zip';
 const HYTALE_DOWNLOADER_DIR = 'hytale-downloader';
 const HYTALE_ARCH_PATTERNS = ['x64', 'amd64', 'x86_64', 'arm64', 'aarch64'];
-const HYTALE_JAR = 'HytaleServer.jar';
 const HYTALE_ASSETS = 'Assets.zip';
+const HYTALE_CREDENTIALS_FILE = '.hytale-downloader-credentials.json';
 
 type LogFn = (message: string) => Promise<void>;
 
@@ -24,18 +24,31 @@ export interface HytaleInstallOptions {
     global?: string | null;
     env?: string | null;
   };
+  patchline?: string;
+  skipUpdateCheck?: boolean;
   importServerPath?: string;
   importAssetsPath?: string;
   overwrite?: boolean;
+}
+
+export interface HytaleInstallResult {
+  serverJar: string;
+  assetsPath: string;
 }
 
 const ensureDir = async (dirPath: string) => {
   await fs.mkdir(dirPath, { recursive: true });
 };
 
-const runCommand = async (command: string, args: string[], cwd: string, log?: LogFn): Promise<void> => {
+const runCommand = async (
+  command: string,
+  args: string[],
+  cwd: string,
+  log?: LogFn,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> => {
   await log?.(`Running: ${command} ${args.join(' ')}`);
-  const child = spawn(command, args, { cwd });
+  const child = spawn(command, args, { cwd, env });
 
   child.stdout?.on('data', async (chunk) => log?.(chunk.toString().trimEnd()));
   child.stderr?.on('data', async (chunk) => log?.(chunk.toString().trimEnd()));
@@ -220,41 +233,91 @@ const copyServerContents = async (sourceDir: string, targetDir: string, overwrit
   }
 };
 
-const placeHytaleFiles = async (sourceRoot: string, targetDir: string, overwrite: boolean) => {
-  const serverFolder = path.join(sourceRoot, 'Server');
-  const hasServerFolder = await fs
-    .access(serverFolder)
-    .then(() => true)
-    .catch(() => false);
-
-  await ensureDir(targetDir);
-
-  const jarTarget = path.join(targetDir, HYTALE_JAR);
-  const assetsTarget = path.join(targetDir, HYTALE_ASSETS);
-  await ensureOverwriteAllowed([jarTarget, assetsTarget], overwrite);
-
-  if (hasServerFolder) {
-    await copyServerContents(serverFolder, targetDir, overwrite);
-  } else {
-    await copyServerContents(sourceRoot, targetDir, overwrite);
-  }
-
-  const assetsSource = path.join(sourceRoot, HYTALE_ASSETS);
-  const assetsExists = await fs
-    .access(assetsSource)
-    .then(() => true)
-    .catch(() => false);
-  if (!assetsExists) {
-    throw new Error('Assets.zip not found in downloaded archive.');
-  }
-  await fs.copyFile(assetsSource, assetsTarget);
+const listEntries = async (dir: string) => {
+  return fs.readdir(dir, { withFileTypes: true });
 };
 
-const validateInstall = async (targetDir: string) => {
-  const jarPath = path.join(targetDir, HYTALE_JAR);
-  const assetsPath = path.join(targetDir, HYTALE_ASSETS);
-  await fs.access(jarPath);
-  await fs.access(assetsPath);
+const listJarCandidates = async (rootDir: string): Promise<{ path: string; size: number; name: string }[]> => {
+  const entries = await listEntries(rootDir);
+  const candidates: { path: string; size: number; name: string }[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      candidates.push(...(await listJarCandidates(entryPath)));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!entry.name.toLowerCase().endsWith('.jar')) continue;
+    const stat = await fs.stat(entryPath);
+    candidates.push({ path: entryPath, size: stat.size, name: entry.name });
+  }
+
+  return candidates;
+};
+
+const listAssetsCandidates = async (
+  rootDir: string,
+): Promise<{ path: string; size: number; name: string }[]> => {
+  const entries = await listEntries(rootDir);
+  const candidates: { path: string; size: number; name: string }[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      candidates.push(...(await listAssetsCandidates(entryPath)));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (entry.name.toLowerCase() !== HYTALE_ASSETS.toLowerCase()) continue;
+    const stat = await fs.stat(entryPath);
+    candidates.push({ path: entryPath, size: stat.size, name: entry.name });
+  }
+
+  return candidates;
+};
+
+const pickBestJar = (candidates: { path: string; size: number; name: string }[]) => {
+  if (candidates.length === 0) return null;
+  const sorted = candidates.sort((a, b) => {
+    const aHasServer = a.name.toLowerCase().includes('server');
+    const bHasServer = b.name.toLowerCase().includes('server');
+    if (aHasServer !== bHasServer) return aHasServer ? -1 : 1;
+    if (a.size !== b.size) return b.size - a.size;
+    return a.path.localeCompare(b.path);
+  });
+  return sorted[0];
+};
+
+const pickBestAssets = (candidates: { path: string; size: number; name: string }[]) => {
+  if (candidates.length === 0) return null;
+  const sorted = candidates.sort((a, b) => {
+    if (a.size !== b.size) return b.size - a.size;
+    return a.path.localeCompare(b.path);
+  });
+  return sorted[0];
+};
+
+const findServerJar = async (serverDir: string) => {
+  const candidates = await listJarCandidates(serverDir);
+  return pickBestJar(candidates);
+};
+
+const findAssetsZip = async (serverDir: string) => {
+  const candidates = await listAssetsCandidates(serverDir);
+  return pickBestAssets(candidates);
+};
+
+const ensureEmptyDir = async (dir: string, overwrite: boolean) => {
+  await ensureDir(dir);
+  const entries = await fs.readdir(dir);
+  if (entries.length > 0 && !overwrite) {
+    throw new Error(`Server directory is not empty: ${dir}`);
+  }
+  if (entries.length > 0 && overwrite) {
+    await fs.rm(dir, { recursive: true, force: true });
+    await ensureDir(dir);
+  }
 };
 
 export const verifyJavaMajor = async (javaBin: string, expectedMajor: number) => {
@@ -284,7 +347,7 @@ export const installFromDownloader = async (
   instanceId: string,
   options: HytaleInstallOptions,
   log?: LogFn,
-): Promise<void> => {
+): Promise<HytaleInstallResult> => {
   const resolvedUrl = resolveDownloaderUrl({
     instance: options.downloaderUrl,
     global: options.downloaderUrlCandidates?.global,
@@ -293,26 +356,69 @@ export const installFromDownloader = async (
   const downloader = await ensureDownloader(resolvedUrl, log);
   const instanceDir = getInstanceDir(instanceId);
   const serverDir = getInstanceServerDir(instanceId);
+  const downloadsDir = path.join(instanceDir, 'downloads');
   await ensureDir(instanceDir);
   await ensureDir(serverDir);
+  await ensureDir(downloadsDir);
 
-  const workDir = await fs.mkdtemp(path.join(instanceDir, 'hytale-download-'));
-  const gameZipPath = path.join(workDir, 'game.zip');
+  const credentialsPath = path.join(instanceDir, HYTALE_CREDENTIALS_FILE);
+  await log?.(`Using downloader credentials at ${credentialsPath}`);
 
-  await runCommand(downloader, ['-download-path', gameZipPath], workDir, log);
+  const gameZipPath = path.join(downloadsDir, 'game.zip');
+  const args = ['-download-path', gameZipPath];
+  if (options.skipUpdateCheck) {
+    args.push('-skip-update-check');
+  }
+  if (options.patchline) {
+    args.push('-patchline', options.patchline);
+  }
 
-  const extractDir = path.join(workDir, 'extract');
-  await ensureDir(extractDir);
-  await extract(gameZipPath, { dir: extractDir });
+  const downloaderEnv = {
+    ...process.env,
+    HOME: instanceDir,
+    USERPROFILE: instanceDir,
+    XDG_CONFIG_HOME: instanceDir,
+  } as NodeJS.ProcessEnv;
 
-  await placeHytaleFiles(extractDir, serverDir, options.overwrite ?? false);
-  await validateInstall(serverDir);
+  await log?.(`Starting downloader to fetch game.zip into ${gameZipPath}`);
+  await runCommand(downloader, args, instanceDir, log, downloaderEnv);
+
+  const zipStat = await fs.stat(gameZipPath).catch(() => null);
+  if (!zipStat?.isFile()) {
+    throw new Error(`Downloader did not create game.zip at ${gameZipPath}`);
+  }
+
+  await log?.('Extracting game.zip into instance server directory');
+  await ensureEmptyDir(serverDir, options.overwrite ?? false);
+  await extract(gameZipPath, { dir: serverDir });
+
+  const jarCandidate = await findServerJar(serverDir);
+  if (!jarCandidate) {
+    throw new Error('No server JAR found in extracted Hytale game.zip.');
+  }
+
+  const assetsCandidate = await findAssetsZip(serverDir);
+  if (!assetsCandidate) {
+    throw new Error('Assets.zip not found in extracted Hytale game.zip.');
+  }
+
+  await log?.(
+    `Detected server jar: ${path.relative(serverDir, jarCandidate.path)} | assets: ${path.relative(
+      serverDir,
+      assetsCandidate.path,
+    )}`,
+  );
+
+  return {
+    serverJar: path.relative(serverDir, jarCandidate.path),
+    assetsPath: path.relative(serverDir, assetsCandidate.path),
+  };
 };
 
 export const installFromImport = async (
   instanceId: string,
   options: HytaleInstallOptions,
-): Promise<void> => {
+): Promise<HytaleInstallResult> => {
   const serverDir = getInstanceServerDir(instanceId);
   await ensureDir(serverDir);
 
@@ -333,12 +439,33 @@ export const installFromImport = async (
     throw new Error('Import assets path must be a file.');
   }
 
-  await ensureOverwriteAllowed([path.join(serverDir, HYTALE_JAR), path.join(serverDir, HYTALE_ASSETS)], options.overwrite ?? false);
+  await ensureEmptyDir(serverDir, options.overwrite ?? false);
 
   await copyServerContents(serverSource, serverDir, options.overwrite ?? false);
-  await fs.copyFile(assetsSource, path.join(serverDir, HYTALE_ASSETS));
+  const assetsFileName = path.basename(assetsSource);
+  const assetsTarget = path.join(serverDir, assetsFileName);
+  await ensureOverwriteAllowed([assetsTarget], options.overwrite ?? false);
+  await fs.copyFile(assetsSource, assetsTarget);
 
-  await validateInstall(serverDir);
+  const jarCandidate = await findServerJar(serverDir);
+  if (!jarCandidate) {
+    throw new Error('No server JAR found in imported Hytale server directory.');
+  }
+
+  return {
+    serverJar: path.relative(serverDir, jarCandidate.path),
+    assetsPath: path.relative(serverDir, assetsTarget),
+  };
+};
+
+export const detectHytaleServerJar = async (serverDir: string) => {
+  const candidate = await findServerJar(serverDir);
+  return candidate ? path.relative(serverDir, candidate.path) : null;
+};
+
+export const detectHytaleAssetsZip = async (serverDir: string) => {
+  const candidate = await findAssetsZip(serverDir);
+  return candidate ? path.relative(serverDir, candidate.path) : null;
 };
 
 export const checkDownloaderVersion = async (

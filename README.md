@@ -13,6 +13,13 @@ Bitte installiere die folgenden Abhängigkeiten abhängig von deinem Betriebssys
 
 ## Abhängigkeiten installieren
 
+### System-Tools (empfohlen)
+
+Für Downloads und Archive sind folgende Tools hilfreich (teilweise bereits installiert):
+
+- `curl` oder `wget` (Downloads)
+- `unzip` / `tar` (Archive für manuelle Importe)
+
 ### Windows (schnell & empfohlen)
 
 > Voraussetzung: Windows 10 / 11
@@ -149,7 +156,19 @@ Der Hytale-Downloader wird per URL geladen. Die Priorität ist:
 2. **Globale Settings**
 3. **ENV** `HYTALE_DOWNLOADER_URL`
 
-> Für Download/Entpacken werden keine zusätzlichen System-Tools (wie `unzip` oder `wget`) benötigt, da dies direkt in Node.js erledigt wird.
+> Hinweis: Die offizielle `hytale-downloader.zip` enthält **keinen Server-JAR**. Sie enthält nur die Downloader-Binaries und eine QUICKSTART-Datei. Der eigentliche Server kommt erst über den Downloader.
+
+### OAuth-Flow
+
+1. Beim ersten **Prepare** startet der Downloader den OAuth-Device-Flow.
+2. Im Prepare-Log erscheint eine URL + Code (z.B. `https://accounts.hytale.com/device`).
+3. Code bestätigen → danach werden die Credentials wiederverwendet.
+
+**Credentials-Speicherort (pro Instanz):**
+
+```
+<instance>/.hytale-downloader-credentials.json
+```
 
 ### Globale Settings (optional)
 

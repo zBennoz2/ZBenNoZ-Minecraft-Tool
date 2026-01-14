@@ -118,7 +118,7 @@ export class InstanceManager {
         ? {
             ...baseConfig,
             minecraftVersion: undefined,
-            serverJar: 'HytaleServer.jar',
+            serverJar: undefined,
             java: { strategy: 'auto', preferredMajor: 25 },
             hytale: {
               assetsPath: 'Assets.zip',

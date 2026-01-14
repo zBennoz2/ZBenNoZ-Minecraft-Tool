@@ -914,8 +914,17 @@ export function Dashboard() {
                         )}
                       </ul>
                       <div className="page__hint">
-                        Install the required Java version or set a Java Path in Settings. After installation, retry
-                        prepare.
+                        Install the required Java version or set a Java Path in{' '}
+                        <Link to={`/instances/${instance.id}/settings`}>Settings</Link>. After installation, retry
+                        prepare. Manual downloads are available at{' '}
+                        <a
+                          href={`https://adoptium.net/temurin/releases/?version=${prepareJavaIssueByInstanceId[instance.id]?.requirement?.major}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Adoptium Temurin releases
+                        </a>
+                        .
                       </div>
                       <div className="actions actions--inline" style={{ marginTop: 8 }}>
                         <button
@@ -933,6 +942,14 @@ export function Dashboard() {
                           <span className="page__hint">{javaInstallByInstanceId[instance.id]?.message}</span>
                         ) : null}
                       </div>
+                      {javaInstallByInstanceId[instance.id]?.status === 'error' ? (
+                        <div className="page__hint" style={{ marginTop: 6 }}>
+                          If the download keeps failing, set the Java Path in{' '}
+                          <Link to={`/instances/${instance.id}/settings`}>Settings</Link> or install Java{' '}
+                          {prepareJavaIssueByInstanceId[instance.id]?.requirement?.major} manually from the
+                          Adoptium site.
+                        </div>
+                      ) : null}
                       {javaInstallByInstanceId[instance.id]?.status === 'installing' ? (
                         <div className="page__hint">
                           Progress: {javaInstallByInstanceId[instance.id]?.progress ?? 0}%
