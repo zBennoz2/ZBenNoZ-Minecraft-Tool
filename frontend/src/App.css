@@ -641,6 +641,16 @@ body {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
+.form__field select option {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+}
+
+.form__field select option:checked {
+  background-color: var(--color-accent-soft);
+  color: var(--color-text-primary);
+}
+
 .form__field input:focus,
 .form__field select:focus,
 .form__field textarea:focus {
@@ -863,6 +873,16 @@ body {
   transition: border-color 120ms ease, box-shadow 120ms ease;
   height: 44px;
   min-width: 0;
+}
+
+.form-control select option {
+  background-color: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+}
+
+.form-control select option:checked {
+  background-color: var(--color-accent-soft);
+  color: var(--color-text-primary);
 }
 
 .form-control textarea {

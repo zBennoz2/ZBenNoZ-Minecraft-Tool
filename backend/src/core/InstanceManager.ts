@@ -126,9 +126,6 @@ export class InstanceManager {
               port: 5520,
               authMode: 'authenticated',
               jvmArgs: [],
-              install: {
-                mode: 'downloader',
-              },
               ...input.hytale,
               install: {
                 mode: 'downloader',
