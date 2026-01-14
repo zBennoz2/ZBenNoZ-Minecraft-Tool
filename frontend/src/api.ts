@@ -1,7 +1,26 @@
 import { API_KEY, apiUrl } from './config'
 
-export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge'
+export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge' | 'hytale'
 export type LoaderType = 'fabric' | 'forge' | 'neoforge'
+
+export type HytaleAuthMode = 'authenticated' | 'offline'
+export type HytaleInstallMode = 'downloader' | 'import'
+
+export interface HytaleInstallConfig {
+  mode?: HytaleInstallMode
+  downloaderUrl?: string
+  importServerPath?: string
+  importAssetsPath?: string
+}
+
+export interface HytaleConfig {
+  assetsPath?: string
+  bind?: string
+  port?: number
+  authMode?: HytaleAuthMode
+  jvmArgs?: string[]
+  install?: HytaleInstallConfig
+}
 
 export interface InstanceLoaderInfo {
   type?: LoaderType
@@ -40,6 +59,7 @@ export interface Instance {
   sleep?: SleepSettings
   backups?: BackupSettings
   serverPort?: number | null
+  hytale?: HytaleConfig
 }
 
 export interface SleepSettings {
@@ -148,12 +168,17 @@ export interface CreateInstancePayload {
   serverType: ServerType
   minecraftVersion?: string
   loader?: InstanceLoaderInfo
+  hytale?: HytaleConfig
 }
 
 export interface PrepareInstanceOptions {
   serverType: ServerType
   minecraftVersion?: string
   loader?: InstanceLoaderInfo
+  hytaleInstallMode?: HytaleInstallMode
+  hytaleDownloaderUrl?: string
+  hytaleImportServerPath?: string
+  hytaleImportAssetsPath?: string
 }
 
 export interface PrepareInstanceResult {
@@ -172,8 +197,16 @@ export type InstanceUpdatePayload = Partial<
     | 'nogui'
     | 'autoAcceptEula'
     | 'startup'
+    | 'hytale'
   >
 >
+
+export interface HytaleAuthStatus {
+  authenticated: boolean
+  deviceUrl?: string
+  userCode?: string
+  matchedLine?: string
+}
 
 interface CatalogVersionsResponse {
   versions: string[]
@@ -417,6 +450,22 @@ export function streamJavaInstall(
   const source = new EventSource(url)
   source.addEventListener('java_install', onEvent)
   return source
+}
+
+export async function getHytaleAuthStatus(id: string): Promise<HytaleAuthStatus> {
+  return fetchApi<HytaleAuthStatus>(`/api/instances/${id}/hytale/auth`)
+}
+
+export async function checkHytaleVersion(id: string): Promise<{ version: string }> {
+  return fetchApi<{ version: string }>(`/api/instances/${id}/hytale/update/check`, {
+    method: 'POST',
+  })
+}
+
+export async function updateHytaleServer(id: string): Promise<{ ok: boolean }> {
+  return fetchApi<{ ok: boolean }>(`/api/instances/${id}/hytale/update`, {
+    method: 'POST',
+  })
 }
 
 export async function getCatalogVersions(serverType: ServerType): Promise<CatalogVersionsResponse> {

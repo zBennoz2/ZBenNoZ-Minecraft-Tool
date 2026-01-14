@@ -68,10 +68,11 @@ export class InstanceManager {
     name: string;
     serverType: ServerType;
     minecraftVersion?: string;
+    hytale?: InstanceConfig['hytale'];
   }): Promise<InstanceConfig> {
     await this.ensureBaseDirs();
 
-    if (!['vanilla', 'paper', 'fabric', 'forge', 'neoforge', 'modded'].includes(input.serverType)) {
+    if (!['vanilla', 'paper', 'fabric', 'forge', 'neoforge', 'modded', 'hytale'].includes(input.serverType)) {
       throw new Error('Invalid server type');
     }
 
@@ -82,7 +83,7 @@ export class InstanceManager {
     await ensureDir(getInstanceLogsDir(id));
 
     const timestamp = new Date().toISOString();
-    const config: InstanceConfig = {
+    const baseConfig: InstanceConfig = {
       id,
       name: input.name,
       serverType: input.serverType,
@@ -112,6 +113,31 @@ export class InstanceManager {
       paperPluginEnabled: false,
     };
 
+    const config: InstanceConfig =
+      input.serverType === 'hytale'
+        ? {
+            ...baseConfig,
+            minecraftVersion: undefined,
+            serverJar: 'HytaleServer.jar',
+            java: { strategy: 'auto', preferredMajor: 25 },
+            hytale: {
+              assetsPath: 'Assets.zip',
+              bind: '0.0.0.0',
+              port: 5520,
+              authMode: 'authenticated',
+              jvmArgs: [],
+              install: {
+                mode: 'downloader',
+              },
+              ...input.hytale,
+              install: {
+                mode: 'downloader',
+                ...(input.hytale?.install ?? {}),
+              },
+            },
+          }
+        : baseConfig;
+
     const configPath = getInstanceConfigPath(id);
     await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
 
@@ -139,7 +165,7 @@ export class InstanceManager {
       throw new Error('Instance not found');
     }
 
-    if (partial.serverType && !['vanilla', 'paper', 'fabric', 'forge', 'neoforge', 'modded'].includes(partial.serverType)) {
+    if (partial.serverType && !['vanilla', 'paper', 'fabric', 'forge', 'neoforge', 'modded', 'hytale'].includes(partial.serverType)) {
       throw new Error('Invalid server type');
     }
 

@@ -1,7 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { InstanceManager } from '../core/InstanceManager';
 import { InstanceConfig, ServerType } from '../core/types';
-import { resolveServerPort } from '../services/serverProperties.service';
+import { resolveServerPortForInstance } from '../services/serverProperties.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -18,7 +18,7 @@ router.get('/', async (_req: Request, res: Response) => {
     const instances = await instanceManager.listInstances();
     const enriched = await Promise.all(
       instances.map(async (instance) => {
-        const serverPort = await resolveServerPort(instance.id).catch(() => undefined);
+        const serverPort = await resolveServerPortForInstance(instance).catch(() => undefined);
         return sanitizeInstance(instance, serverPort);
       }),
     );
@@ -35,7 +35,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     if (!instance) {
       return res.status(404).json({ error: 'Instance not found' });
     }
-    const serverPort = await resolveServerPort(instance.id).catch(() => undefined);
+    const serverPort = await resolveServerPortForInstance(instance).catch(() => undefined);
     res.json(sanitizeInstance(instance, serverPort));
   } catch (error) {
     console.error(`Error fetching instance ${req.params.id}`, error);
@@ -54,10 +54,11 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 router.post('/', async (req: Request, res: Response) => {
-  const { name, serverType, minecraftVersion } = req.body as {
+  const { name, serverType, minecraftVersion, hytale } = req.body as {
     name?: string;
     serverType?: ServerType;
     minecraftVersion?: string;
+    hytale?: InstanceConfig['hytale'];
   };
 
   if (!name || !serverType) {
@@ -69,6 +70,7 @@ router.post('/', async (req: Request, res: Response) => {
       name,
       serverType,
       minecraftVersion,
+      hytale,
     });
     res.status(201).json(created);
   } catch (error) {

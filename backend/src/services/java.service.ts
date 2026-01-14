@@ -29,7 +29,8 @@ export interface JavaInstallEvent {
 const JAVA_FILENAME = process.platform === 'win32' ? 'java.exe' : 'java'
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000
 
-export const getRecommendedJavaMajor = (mcVersion: string, _serverType?: string): number => {
+export const getRecommendedJavaMajor = (mcVersion: string, serverType?: string): number => {
+  if (serverType === 'hytale') return 25
   const normalized = mcVersion?.trim() ?? ''
 
   if (/^1\.21(\.|$)/.test(normalized)) return 21

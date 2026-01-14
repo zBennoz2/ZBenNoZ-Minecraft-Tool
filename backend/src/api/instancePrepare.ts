@@ -11,6 +11,12 @@ import { logStreamService } from '../services/logStream.service';
 import { LoaderType, ServerType } from '../core/types';
 import { resolveJavaForInstance } from '../services/java.service';
 import { InstanceActionError } from '../core/InstanceActionError';
+import {
+  HytaleInstallMode,
+  installFromDownloader,
+  installFromImport,
+  verifyJavaMajor,
+} from '../services/hytaleInstaller.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -23,7 +29,7 @@ const NEOFORGE_MAVEN_BASE = 'https://maven.neoforged.net/releases/net/neoforged/
 const FABRIC_MAVEN_BASE = 'https://maven.fabricmc.net/net/fabricmc/fabric-installer';
 const USER_AGENT = 'MinecraftPanel/0.1 (+https://example.local)';
 
-const allowedTypes: ServerType[] = ['vanilla', 'paper', 'fabric', 'forge', 'neoforge'];
+const allowedTypes: ServerType[] = ['vanilla', 'paper', 'fabric', 'forge', 'neoforge', 'hytale'];
 
 type PrepareError = { status: number; message: string; detail?: string };
 
@@ -265,6 +271,10 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     loaderVersion,
     forgeVersion,
     neoforgeVersion,
+    hytaleInstallMode,
+    hytaleDownloaderUrl,
+    hytaleImportServerPath,
+    hytaleImportAssetsPath,
   } = req.body as {
     serverType?: ServerType;
     minecraftVersion?: string;
@@ -272,10 +282,14 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     loaderVersion?: string;
     forgeVersion?: string;
     neoforgeVersion?: string;
+    hytaleInstallMode?: HytaleInstallMode;
+    hytaleDownloaderUrl?: string;
+    hytaleImportServerPath?: string;
+    hytaleImportAssetsPath?: string;
   };
 
   if (!serverType || !allowedTypes.includes(serverType)) {
-    return res.status(400).json({ error: 'serverType must be one of vanilla, paper, fabric, forge, neoforge' });
+    return res.status(400).json({ error: 'serverType must be one of vanilla, paper, fabric, forge, neoforge, hytale' });
   }
 
   const instance = await instanceManager.getInstance(id);
@@ -327,6 +341,47 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
         overwrite,
         javaBin || 'java',
       );
+    } else if (serverType === 'hytale') {
+      const mode = hytaleInstallMode ?? instance.hytale?.install?.mode ?? 'downloader';
+      await verifyJavaMajor(javaBin || 'java', 25);
+      if (mode === 'downloader') {
+        await logPrepare(id, 'Installing Hytale server via Downloader CLI');
+        await installFromDownloader(
+          id,
+          {
+            mode,
+            downloaderUrl: hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+            overwrite,
+          },
+          (message) => logPrepare(id, message),
+        );
+      } else if (mode === 'import') {
+        await logPrepare(id, 'Importing existing Hytale server files');
+        await installFromImport(id, {
+          mode,
+          importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
+          importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
+          overwrite,
+        });
+      } else {
+        throw { status: 400, message: 'Invalid hytale install mode' } as PrepareError;
+      }
+
+      await instanceManager.updateInstance(id, {
+        serverType: 'hytale',
+        minecraftVersion: undefined,
+        serverJar: 'HytaleServer.jar',
+        startup: { mode: 'jar' },
+        hytale: {
+          ...(instance.hytale ?? {}),
+          install: {
+            mode,
+            downloaderUrl: hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+            importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
+            importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
+          },
+        },
+      });
     }
 
     const updated = await instanceManager.getInstance(id);

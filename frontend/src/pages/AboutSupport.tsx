@@ -3,6 +3,7 @@ import packageJson from '../../package.json'
 import { SUPPORT_WEBSITE } from '../config'
 import { type LicenseStatus } from '../api/license'
 import useLicenseStatus from '../hooks/useLicenseStatus'
+import BackButton from '../components/BackButton'
 
 const APP_VERSION = packageJson.version ?? '—'
 
@@ -35,6 +36,9 @@ export function AboutSupport() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h1>ZBenNoZ Gaming</h1>

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { apiUrl, runtimeConfig } from '../config'
 import type { BackendStatusPayload } from '../types/global'
+import BackButton from '../components/BackButton'
 
 interface AppInfo {
   name: string
@@ -88,6 +89,9 @@ export function DiagnosticsPage() {
 
   return (
     <div className="page">
+      <div className="page__toolbar">
+        <BackButton />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h2>Diagnostics</h2>

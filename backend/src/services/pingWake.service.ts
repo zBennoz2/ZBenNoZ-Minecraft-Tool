@@ -105,6 +105,10 @@ class PingWakeService {
   private async ensureListener(instanceId: string) {
     const instance = await this.instanceManager.getInstance(instanceId)
     if (!instance) return
+    if (instance.serverType === 'hytale') {
+      await this.releaseListener(instanceId)
+      return
+    }
     const settings = instance.sleep ?? {}
     if (!settings.wakeOnPing) {
       await this.releaseListener(instanceId)

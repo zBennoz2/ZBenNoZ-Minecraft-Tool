@@ -1,0 +1,102 @@
+import { Request, Response, Router } from 'express';
+import { InstanceManager } from '../core/InstanceManager';
+import { LogService } from '../core/LogService';
+import { logStreamService } from '../services/logStream.service';
+import { getHytaleAuthStatus } from '../services/hytaleAuth.service';
+import {
+  checkDownloaderVersion,
+  installFromDownloader,
+  verifyJavaMajor,
+} from '../services/hytaleInstaller.service';
+import { resolveJavaForInstance } from '../services/java.service';
+
+const router = Router();
+const instanceManager = new InstanceManager();
+const logService = new LogService();
+
+const logPanel = async (instanceId: string, message: string) => {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  await logService.appendLog(instanceId, line, 'prepare');
+  await logService.appendLog(instanceId, line, 'server');
+  logStreamService.emitLog(instanceId, line);
+};
+
+const ensureHytaleInstance = async (id: string, res: Response) => {
+  const instance = await instanceManager.getInstance(id);
+  if (!instance) {
+    res.status(404).json({ error: 'Instance not found' });
+    return null;
+  }
+  if (instance.serverType !== 'hytale') {
+    res.status(400).json({ error: 'Instance is not a Hytale server' });
+    return null;
+  }
+  return instance;
+};
+
+router.get('/:id/hytale/auth', async (req: Request, res: Response) => {
+  const instance = await ensureHytaleInstance(req.params.id, res);
+  if (!instance) return;
+
+  try {
+    const status = await getHytaleAuthStatus(instance.id);
+    res.json(status);
+  } catch (error) {
+    console.error('Failed to read Hytale auth status', error);
+    res.status(500).json({ error: 'Failed to read auth status' });
+  }
+});
+
+router.post('/:id/hytale/update/check', async (req: Request, res: Response) => {
+  const instance = await ensureHytaleInstance(req.params.id, res);
+  if (!instance) return;
+
+  try {
+    const version = await checkDownloaderVersion(instance.hytale?.install?.downloaderUrl);
+    res.json({ version });
+  } catch (error: any) {
+    console.error('Hytale version check failed', error);
+    res.status(500).json({ error: error?.message ?? 'Failed to check version' });
+  }
+});
+
+router.post('/:id/hytale/update', async (req: Request, res: Response) => {
+  const instance = await ensureHytaleInstance(req.params.id, res);
+  if (!instance) return;
+
+  try {
+    const resolved = await resolveJavaForInstance(instance, '', 'hytale');
+    if (resolved.status !== 'resolved') {
+      return res.status(409).json({
+        error: 'NEEDS_JAVA',
+        recommendedMajor: resolved.recommendedMajor,
+        candidates: resolved.candidates,
+      });
+    }
+    await verifyJavaMajor(resolved.javaBin, 25);
+  } catch (error: any) {
+    console.error('Java verification failed for Hytale update', error);
+    return res.status(500).json({ error: error?.message ?? 'Java 25 verification failed' });
+  }
+
+  try {
+    await logPanel(instance.id, 'Updating Hytale server via Downloader CLI');
+    await installFromDownloader(
+      instance.id,
+      {
+        mode: 'downloader',
+        downloaderUrl: instance.hytale?.install?.downloaderUrl,
+        overwrite: true,
+      },
+      (message) => logPanel(instance.id, message),
+    );
+    await logPanel(instance.id, 'Hytale update finished');
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Hytale update failed', error);
+    await logPanel(instance.id, `Hytale update failed: ${error?.message ?? 'unknown error'}`);
+    res.status(500).json({ error: error?.message ?? 'Hytale update failed' });
+  }
+});
+
+export default router;

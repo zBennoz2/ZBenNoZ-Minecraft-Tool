@@ -9,6 +9,7 @@ import {
   uploadFile,
   writeFile,
 } from '../api/files'
+import BackButton from '../components/BackButton'
 
 const joinPath = (base: string, name: string) =>
   [base, name].filter(Boolean).join('/').replace(/\/+/g, '/')
@@ -126,6 +127,19 @@ export function FilesPage() {
     }
   }
 
+  const reloadCurrentFile = async () => {
+    if (!id || !selectedFile) return
+    setFeedback(null)
+    setError(null)
+    try {
+      const content = await readFile(id, selectedFile)
+      setFileContent(content)
+      setFeedback('Datei neu geladen.')
+    } catch (err) {
+      setError(resolveError(err, 'Failed to reload file'))
+    }
+  }
+
   const handleDelete = async (name: string) => {
     if (!id) return
     const path = joinPath(currentPath, name)
@@ -199,8 +213,11 @@ export function FilesPage() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+      </div>
       <div className="page__header page__header--spread">
-        <div>
+        <div className="page__cluster">
           <h1>Files</h1>
           {id ? <span className="page__id">Instance: {id}</span> : null}
           <div className="breadcrumbs">
@@ -342,17 +359,30 @@ export function FilesPage() {
         {selectedFile ? (
           <div className="files__editor">
             <div className="files__editor-header">
-              <h3>{selectedFile}</h3>
-              <button className="btn" onClick={handleSaveFile} disabled={saving}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
+              <div className="page__cluster">
+                <h3>{selectedFile}</h3>
+                <p className="page__hint">
+                  Editor in voller Breite für Konfigurations- und Log-Dateien. Änderungen nicht vergessen zu speichern.
+                </p>
+              </div>
+              <div className="actions">
+                <button className="btn btn--ghost" onClick={reloadCurrentFile} disabled={saving}>
+                  Reload
+                </button>
+                <button className="btn btn--ghost" onClick={() => setSelectedFile(null)} disabled={saving}>
+                  Close
+                </button>
+                <button className="btn" onClick={handleSaveFile} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
             </div>
             <textarea
               className="textarea"
               value={fileContent}
               spellCheck={false}
               onChange={(event) => setFileContent(event.target.value)}
-              rows={20}
+              rows={26}
             />
           </div>
         ) : (

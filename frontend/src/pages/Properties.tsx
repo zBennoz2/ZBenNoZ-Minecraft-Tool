@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getInstanceStatus, restartInstance } from '../api'
+import { getInstance, getInstanceStatus, restartInstance } from '../api'
 import { readServerProperties, writeServerProperties, ServerPropertiesResponse } from '../api/properties'
 import { PropertyLine, applyProperties, parseProperties } from '../utils/properties'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
+import BackButton from '../components/BackButton'
 
 type Mode = 'basic' | 'advanced'
 type Difficulty = 'peaceful' | 'easy' | 'normal' | 'hard'
@@ -16,12 +17,17 @@ type BasicFormState = {
   maxPlayers: string
   serverPort: string
   levelName: string
+  levelSeed: string
   gamemode: Gamemode
   difficulty: Difficulty
   hardcore: boolean
   pvp: boolean
+  forceGamemode: boolean
   spawnProtection: string
   allowNether: boolean
+  allowEnd: boolean
+  generateStructures: boolean
+  allowFlight: boolean
   enableCommandBlock: boolean
   onlineMode: boolean
   whiteList: boolean
@@ -31,6 +37,8 @@ type BasicFormState = {
   rconPassword: string
   viewDistance: string
   simulationDistance: string
+  maxWorldSize: string
+  playerIdleTimeout: string
 }
 
 type ValidationState = Partial<Record<keyof BasicFormState, string>>
@@ -40,12 +48,17 @@ const propertyKeyMap: Record<keyof BasicFormState, string> = {
   maxPlayers: 'max-players',
   serverPort: 'server-port',
   levelName: 'level-name',
+  levelSeed: 'level-seed',
   gamemode: 'gamemode',
   difficulty: 'difficulty',
   hardcore: 'hardcore',
   pvp: 'pvp',
+  forceGamemode: 'force-gamemode',
   spawnProtection: 'spawn-protection',
   allowNether: 'allow-nether',
+  allowEnd: 'allow-end',
+  generateStructures: 'generate-structures',
+  allowFlight: 'allow-flight',
   enableCommandBlock: 'enable-command-block',
   onlineMode: 'online-mode',
   whiteList: 'white-list',
@@ -55,6 +68,8 @@ const propertyKeyMap: Record<keyof BasicFormState, string> = {
   rconPassword: 'rcon.password',
   viewDistance: 'view-distance',
   simulationDistance: 'simulation-distance',
+  maxWorldSize: 'max-world-size',
+  playerIdleTimeout: 'player-idle-timeout',
 }
 
 const knownKeys = new Set(Object.values(propertyKeyMap))
@@ -72,12 +87,17 @@ const buildBasicForm = (props: Record<string, string>): BasicFormState => ({
   maxPlayers: props['max-players'] ?? '20',
   serverPort: props['server-port'] ?? '25565',
   levelName: props['level-name'] ?? 'world',
+  levelSeed: props['level-seed'] ?? '',
   gamemode: (props['gamemode'] as Gamemode) ?? 'survival',
   difficulty: (props['difficulty'] as Difficulty) ?? 'easy',
   hardcore: toBoolean(props['hardcore'], false),
   pvp: toBoolean(props['pvp'], true),
+  forceGamemode: toBoolean(props['force-gamemode'], false),
   spawnProtection: props['spawn-protection'] ?? '16',
   allowNether: toBoolean(props['allow-nether'], true),
+  allowEnd: toBoolean(props['allow-end'], true),
+  generateStructures: toBoolean(props['generate-structures'], true),
+  allowFlight: toBoolean(props['allow-flight'], false),
   enableCommandBlock: toBoolean(props['enable-command-block'], false),
   onlineMode: toBoolean(props['online-mode'], true),
   whiteList: toBoolean(props['white-list'], false),
@@ -87,6 +107,8 @@ const buildBasicForm = (props: Record<string, string>): BasicFormState => ({
   rconPassword: props['rcon.password'] ?? '',
   viewDistance: props['view-distance'] ?? '10',
   simulationDistance: props['simulation-distance'] ?? '10',
+  maxWorldSize: props['max-world-size'] ?? '29999984',
+  playerIdleTimeout: props['player-idle-timeout'] ?? '0',
 })
 
 const defaultForm = buildBasicForm({})
@@ -109,6 +131,15 @@ const validatePositive = (value: string, label: string, min = 1) => {
   return undefined
 }
 
+const validateNonNegative = (value: string, label: string) => {
+  if (!value.trim()) return `${label} darf nicht leer sein`
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return `${label} darf nicht negativ sein`
+  }
+  return undefined
+}
+
 const validateBasicForm = (form: BasicFormState): ValidationState => {
   const errors: ValidationState = {}
   errors.maxPlayers = validatePositive(form.maxPlayers, 'Max Players', 1)
@@ -116,6 +147,8 @@ const validateBasicForm = (form: BasicFormState): ValidationState => {
   errors.spawnProtection = validatePositive(form.spawnProtection, 'Spawn Protection', 0)
   errors.viewDistance = validatePositive(form.viewDistance, 'View Distance', 2)
   errors.simulationDistance = validatePositive(form.simulationDistance, 'Simulation Distance', 2)
+  errors.maxWorldSize = validatePositive(form.maxWorldSize, 'Max World Size', 1)
+  errors.playerIdleTimeout = validateNonNegative(form.playerIdleTimeout, 'Idle Timeout')
 
   if (form.enableRcon || form.rconPort.trim()) {
     errors.rconPort = validatePort(form.rconPort, 'RCON Port')
@@ -129,6 +162,7 @@ const validateBasicForm = (form: BasicFormState): ValidationState => {
 
 const sections: {
   title: string
+  description?: string
   fields: (
     | { id: keyof BasicFormState; label: string; type: 'text' | 'number' | 'password'; help: string; options?: never }
     | {
@@ -142,17 +176,33 @@ const sections: {
   )[]
 }[] = [
   {
-    title: 'Server Info',
+    title: 'Server & Spieler',
+    description: 'Basisdaten, Ports und Zugangsregeln für deinen Server.',
     fields: [
-      { id: 'motd', label: 'MOTD', type: 'text', help: 'Text, der im Server-Browser angezeigt wird.' },
-      { id: 'maxPlayers', label: 'Max Players', type: 'number', help: 'Min. 1 Spieler, mehr benötigt mehr RAM.' },
-      { id: 'serverPort', label: 'Server Port', type: 'number', help: 'Standard: 25565. Öffne den Port in deiner Firewall.' },
+      { id: 'motd', label: 'MOTD', type: 'text', help: 'Text im Multiplayer-Browser. Emojis und Farben möglich.' },
+      { id: 'maxPlayers', label: 'Max Players', type: 'number', help: 'Begrenzt gleichzeitige Spieler. Höhere Werte brauchen mehr RAM.' },
+      { id: 'serverPort', label: 'Server Port', type: 'number', help: 'Standard: 25565. Stelle sicher, dass der Port freigegeben ist.' },
+      { id: 'playerIdleTimeout', label: 'Idle Timeout (min)', type: 'number', help: '0 = kein Autokick. Kickt AFK-Spieler nach Minuten.' },
+      { id: 'whiteList', label: 'Whitelist', type: 'toggle', help: 'Nur gelistete Spieler dürfen joinen.' },
+      { id: 'enforceWhitelist', label: 'Enforce Whitelist', type: 'toggle', help: 'Kick Spieler sofort, wenn sie nicht gelistet sind.' },
+      { id: 'onlineMode', label: 'Online Mode', type: 'toggle', help: 'Spieler-Authentifizierung über Mojang. Deaktivieren nur im LAN/offline.' },
     ],
   },
   {
-    title: 'World',
+    title: 'Welt & Dimensionen',
+    description: 'Weltordner, Seeds und welche Dimensionen erzeugt werden dürfen.',
     fields: [
       { id: 'levelName', label: 'Level Name', type: 'text', help: 'Ordnername der Welt.' },
+      { id: 'levelSeed', label: 'Level Seed', type: 'text', help: 'Optionaler Seed. Leer lassen für Zufallswelt.' },
+      { id: 'allowNether', label: 'Allow Nether', type: 'toggle', help: 'Aktiviere Reisen ins Nether.' },
+      { id: 'allowEnd', label: 'Allow End', type: 'toggle', help: 'Aktiviert die End-Dimension analog zum Nether-Schalter.' },
+      { id: 'generateStructures', label: 'Generate Structures', type: 'toggle', help: 'Dörfer, Festungen & Co. erzeugen.' },
+    ],
+  },
+  {
+    title: 'Gameplay & Regeln',
+    description: 'Spielmodus, Schwierigkeit und Sicherheitsradien.',
+    fields: [
       {
         id: 'gamemode',
         label: 'Gamemode',
@@ -177,24 +227,18 @@ const sections: {
           { value: 'hard', label: 'Hard' },
         ],
       },
-      { id: 'hardcore', label: 'Hardcore Mode', type: 'toggle', help: 'Erzwingt Hardcore (Ein Leben).' },
-    ],
-  },
-  {
-    title: 'Gameplay Rules',
-    fields: [
+      { id: 'forceGamemode', label: 'Force Gamemode', type: 'toggle', help: 'Setzt den Standard-Gamemode bei jedem Login.' },
+      { id: 'hardcore', label: 'Hardcore Mode', type: 'toggle', help: 'Ein Leben, Welt wird nach Tod gesperrt.' },
       { id: 'pvp', label: 'PvP', type: 'toggle', help: 'Erlaubt Schaden zwischen Spielern.' },
+      { id: 'allowFlight', label: 'Allow Flight', type: 'toggle', help: 'Erlaubt Fliegen (z. B. mit Mods) ohne Kick.' },
       { id: 'spawnProtection', label: 'Spawn Protection', type: 'number', help: 'Sicherheitsradius um den Spawn in Blöcken.' },
-      { id: 'allowNether', label: 'Allow Nether', type: 'toggle', help: 'Aktiviere Reisen ins Nether.' },
-      { id: 'enableCommandBlock', label: 'Command Blocks', type: 'toggle', help: 'Erlaubt Command Blocks.' },
     ],
   },
   {
-    title: 'Security / Network',
+    title: 'Befehle & Remote',
+    description: 'Command Blocks und Remote-Konsole absichern.',
     fields: [
-      { id: 'onlineMode', label: 'Online Mode', type: 'toggle', help: 'Verifiziert Spieler mit Mojang (empfohlen).' },
-      { id: 'whiteList', label: 'Whitelist', type: 'toggle', help: 'Nur eingetragene Spieler dürfen joinen.' },
-      { id: 'enforceWhitelist', label: 'Enforce Whitelist', type: 'toggle', help: 'Kick Spieler, die nicht auf der Whitelist stehen.' },
+      { id: 'enableCommandBlock', label: 'Command Blocks', type: 'toggle', help: 'Erlaubt Command Blocks.' },
       { id: 'enableRcon', label: 'Enable RCON', type: 'toggle', help: 'Remote-Konsole aktivieren.' },
       { id: 'rconPort', label: 'RCON Port', type: 'number', help: 'Port für RCON-Verbindungen.' },
       { id: 'rconPassword', label: 'RCON Password', type: 'password', help: 'RCON Passwort (geheim halten).' },
@@ -202,9 +246,11 @@ const sections: {
   },
   {
     title: 'Performance',
+    description: 'Chunk-Entfernungen und Weltgrenzen feinjustieren.',
     fields: [
       { id: 'viewDistance', label: 'View Distance', type: 'number', help: 'Chunks, die Clients sehen. Niedriger = weniger Last.' },
       { id: 'simulationDistance', label: 'Simulation Distance', type: 'number', help: 'Chunks, die getickt werden. Niedriger = weniger CPU.' },
+      { id: 'maxWorldSize', label: 'Max World Size', type: 'number', help: 'Maximaler Weltradius (Block). 29999984 ist Vanilla-Default.' },
     ],
   },
 ]
@@ -229,6 +275,7 @@ export function PropertiesPage() {
 
   const [status, setStatus] = useState<InstanceStatus>('unknown')
   const [statusError, setStatusError] = useState<string | null>(null)
+  const [serverType, setServerType] = useState<string | null>(null)
 
   const parsed = useMemo(() => parseProperties(currentRaw), [currentRaw])
 
@@ -306,9 +353,20 @@ export function PropertiesPage() {
     }
   }
 
+  const fetchInstanceType = async () => {
+    if (!id) return
+    try {
+      const instance = await getInstance(id)
+      setServerType(instance.serverType)
+    } catch {
+      setServerType(null)
+    }
+  }
+
   useEffect(() => {
     fetchProperties()
     refreshStatus()
+    fetchInstanceType()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -394,10 +452,31 @@ export function PropertiesPage() {
         ? 'Instance gestoppt'
         : 'Status unbekannt'
 
+  if (serverType === 'hytale') {
+    return (
+      <section className="page properties-page">
+        <div className="page__toolbar">
+          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        </div>
+        <div className="page__header page__header--spread">
+          <div className="page__cluster">
+            <h1>Server Settings</h1>
+            {id ? <span className="page__id">Instance: {id}</span> : null}
+            <p className="page__hint">Hytale nutzt keine server.properties. Bitte verwende den Settings-Tab.</p>
+          </div>
+        </div>
+        <div className="alert alert--muted">{statusHint}</div>
+      </section>
+    )
+  }
+
   return (
-    <section className="page">
+    <section className="page properties-page">
+      <div className="page__toolbar">
+        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+      </div>
       <div className="page__header page__header--spread">
-        <div>
+        <div className="page__cluster">
           <h1>Server Settings</h1>
           {id ? <span className="page__id">Instance: {id}</span> : null}
           <p className="page__hint">Bearbeite server.properties komfortabel oder im Raw-Editor.</p>
@@ -433,58 +512,63 @@ export function PropertiesPage() {
         </div>
       </div>
 
-      {error ? <div className="alert alert--error">{error}</div> : null}
+      <div className="properties-page__content">
+        {error ? <div className="alert alert--error">{error}</div> : null}
 
-      {success ? (
-        <div className="alert alert--muted">
-          {success}
-          <div className="actions actions--inline">
-            <button className="btn btn--secondary" onClick={fetchProperties} disabled={loading}>
-              Reload
-            </button>
-            {status === 'running' ? (
-              <button className="btn" onClick={handleRestart} disabled={restartLoading}>
-                {restartLoading ? 'Restarting…' : 'Restart now'}
+        {success ? (
+          <div className="alert alert--muted">
+            {success}
+            <div className="actions actions--inline">
+              <button className="btn btn--secondary" onClick={fetchProperties} disabled={loading}>
+                Reload
               </button>
-            ) : (
-              <span className="properties__restart-hint">Restart verfügbar, sobald die Instance läuft.</span>
-            )}
+              {status === 'running' ? (
+                <button className="btn" onClick={handleRestart} disabled={restartLoading}>
+                  {restartLoading ? 'Restarting…' : 'Restart now'}
+                </button>
+              ) : (
+                <span className="properties__restart-hint">Restart verfügbar, sobald die Instance läuft.</span>
+              )}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {loading ? <div className="alert alert--muted">Loading server.properties…</div> : null}
+        {loading ? <div className="alert alert--muted">Loading server.properties…</div> : null}
 
-      {!loading && !exists ? (
-        <div className="alert alert--muted">
-          server.properties existiert noch nicht. Bitte Instance vorbereiten/gestartet haben oder neu speichern.
-        </div>
-      ) : null}
+        {!loading && !exists ? (
+          <div className="alert alert--muted">
+            server.properties existiert noch nicht. Bitte Instance vorbereiten/gestartet haben oder neu speichern.
+          </div>
+        ) : null}
 
-      <div className="properties__status">{statusHint}</div>
+        <div className="properties__status">{statusHint}</div>
 
-      {mode === 'basic' ? (
-        <>
-          <div className="properties__grid">
-            {sections.map((section) => (
-              <FormSection key={section.title} title={section.title}>
-                {section.fields.map((field) => {
+        {mode === 'basic' ? (
+          <>
+            <div className="properties__grid">
+              {sections.map((section) => (
+                <FormSection key={section.title} title={section.title} description={section.description}>
+                  {section.fields.map((field) => {
                   const fieldValue = basicForm[field.id]
                   const errorText = validation[field.id]
+                  const disableInput =
+                    (field.id === 'rconPort' || field.id === 'rconPassword') && !basicForm.enableRcon
 
-                  if (field.type === 'toggle') {
-                    const boolValue = Boolean(fieldValue)
-                    return (
-                      <FormRow key={field.id} label={field.label} help={field.help}>
-                        <FormToggle
-                          label={field.label}
-                          description={field.help}
-                          checked={boolValue}
-                          onChange={() => handleToggle(field.id)}
-                        />
-                      </FormRow>
-                    )
-                  }
+                    if (field.type === 'toggle') {
+                      const boolValue = Boolean(fieldValue)
+                      return (
+                        <FormRow key={field.id} label={field.label} help={field.help}>
+                          <FormToggle
+                            label={field.label}
+                            description={field.help}
+                            checked={boolValue}
+                            onChange={() => handleToggle(field.id)}
+                            showLabel={false}
+                            ariaLabel={field.label}
+                          />
+                        </FormRow>
+                      )
+                    }
 
                   if (field.type === 'select') {
                     return (
@@ -492,6 +576,7 @@ export function PropertiesPage() {
                         <select
                           value={String(fieldValue)}
                           onChange={(event) => handleInputChange(field.id, event.target.value)}
+                          disabled={disableInput}
                         >
                           {field.options.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -511,53 +596,55 @@ export function PropertiesPage() {
                         value={String(fieldValue)}
                         onChange={(event) => handleInputChange(field.id, event.target.value)}
                         min={field.type === 'number' ? 0 : undefined}
+                        disabled={disableInput}
                       />
                       {errorText ? <span className="form__error">{errorText}</span> : null}
                     </FormRow>
                   )
-                })}
-              </FormSection>
-            ))}
+                  })}
+                </FormSection>
+              ))}
 
-            <FormSection
-              title="Other properties"
-              description="Alle nicht gemappten Keys bleiben erhalten. Bearbeite sie im Advanced Mode."
-            >
-              {otherProperties.length === 0 ? (
-                <div className="empty">Keine weiteren properties gefunden.</div>
-              ) : (
-                <div className="properties__table">
-                  <div className="properties__table-row properties__table-head">
-                    <span>Key</span>
-                    <span>Value</span>
-                  </div>
-                  {otherProperties.map((line, index) => (
-                    <div key={`${line.key}-${index}`} className="properties__table-row">
-                      <span className="properties__mono">{line.key}</span>
-                      <span className="properties__mono">{line.value}</span>
+              <FormSection
+                title="Other properties"
+                description="Alle nicht gemappten Keys bleiben erhalten. Bearbeite sie im Advanced Mode."
+              >
+                {otherProperties.length === 0 ? (
+                  <div className="empty">Keine weiteren properties gefunden.</div>
+                ) : (
+                  <div className="properties__table">
+                    <div className="properties__table-row properties__table-head">
+                      <span>Key</span>
+                      <span>Value</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </FormSection>
-          </div>
+                    {otherProperties.map((line, index) => (
+                      <div key={`${line.key}-${index}`} className="properties__table-row">
+                        <span className="properties__mono">{line.key}</span>
+                        <span className="properties__mono">{line.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </FormSection>
+            </div>
 
-          {hasValidationError ? (
-            <div className="alert alert--error">Bitte behebe die Validierungsfehler, bevor du speicherst.</div>
-          ) : null}
-        </>
-      ) : (
-        <FormSection title="Advanced / Raw" description="Advanced mode edits the raw file.">
-          <textarea
-            className="textarea properties__raw"
-            spellCheck={false}
-            value={currentRaw}
-            onChange={(event) => handleRawChange(event.target.value)}
-            rows={22}
-            disabled={loading}
-          />
-        </FormSection>
-      )}
+            {hasValidationError ? (
+              <div className="alert alert--error">Bitte behebe die Validierungsfehler, bevor du speicherst.</div>
+            ) : null}
+          </>
+        ) : (
+          <FormSection title="Advanced / Raw" description="Advanced mode edits the raw file.">
+            <textarea
+              className="textarea properties__raw"
+              spellCheck={false}
+              value={currentRaw}
+              onChange={(event) => handleRawChange(event.target.value)}
+              rows={28}
+              disabled={loading}
+            />
+          </FormSection>
+        )}
+      </div>
     </section>
   )
 }

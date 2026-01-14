@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { SystemOverview, getSystemOverview } from '../api'
+import BackButton from '../components/BackButton'
 
 const formatBytes = (bytes: number | null | undefined) => {
   if (bytes === null || bytes === undefined) return '—'
-  if (bytes < 1024) return `${bytes.toFixed(0)} B`
-  const units = ['KB', 'MB', 'GB', 'TB', 'PB']
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   let value = bytes
   let unitIndex = 0
   while (value >= 1024 && unitIndex < units.length - 1) {
     value /= 1024
     unitIndex += 1
   }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`
+  const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2
+  return `${value.toFixed(decimals)} ${units[unitIndex]}`
 }
 
 const formatPercent = (value: number | null | undefined) => {
@@ -65,6 +66,9 @@ export function SystemPage() {
 
   return (
     <div className="page">
+      <div className="page__toolbar">
+        <BackButton />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h2>System</h2>

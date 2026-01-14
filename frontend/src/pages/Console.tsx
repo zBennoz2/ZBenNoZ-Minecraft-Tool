@@ -1,10 +1,22 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { InstanceStatus, getInstanceStatus, sendCommand } from '../api'
+import BackButton from '../components/BackButton'
+import { Instance, InstanceStatus, getHytaleAuthStatus, getInstance, getInstanceStatus, sendCommand } from '../api'
 import { apiUrl } from '../config'
 
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 const MAX_LOGS = 2000
+
+type HytaleAuthInfo = {
+  authenticated: boolean
+  deviceUrl?: string
+  userCode?: string
+  matchedLine?: string
+}
+
+const DEVICE_URL_PATTERN = /(https?:\/\/accounts\.hytale\.com\/device)/i
+const DEVICE_CODE_PATTERN = /\b(?:code|device code|user code)\s*[:=]\s*([a-z0-9-]{4,})/i
+const AUTH_SUCCESS_PATTERN = /authentication successful/i
 
 const parseLogLine = (data: string): string => {
   try {
@@ -24,6 +36,25 @@ const parseLogLine = (data: string): string => {
   }
 }
 
+const extractHytaleAuthInfo = (line: string): HytaleAuthInfo | null => {
+  if (AUTH_SUCCESS_PATTERN.test(line)) {
+    return { authenticated: true, matchedLine: line }
+  }
+
+  const urlMatch = line.match(DEVICE_URL_PATTERN)
+  const codeMatch = line.match(DEVICE_CODE_PATTERN)
+  if (urlMatch || codeMatch) {
+    return {
+      authenticated: false,
+      deviceUrl: urlMatch?.[1],
+      userCode: codeMatch?.[1]?.toUpperCase(),
+      matchedLine: line,
+    }
+  }
+
+  return null
+}
+
 export function ConsolePage() {
   const { id } = useParams()
   const [logs, setLogs] = useState<string[]>([])
@@ -35,6 +66,11 @@ export function ConsolePage() {
   const [isSending, setIsSending] = useState(false)
   const [commandError, setCommandError] = useState<string | null>(null)
   const [instanceStatus, setInstanceStatus] = useState<InstanceStatus['status']>('unknown')
+  const [instanceInfo, setInstanceInfo] = useState<Instance | null>(null)
+  const [hytaleAuth, setHytaleAuth] = useState<HytaleAuthInfo | null>(null)
+  const [hytaleAuthError, setHytaleAuthError] = useState<string | null>(null)
+  const [hytaleAuthLoading, setHytaleAuthLoading] = useState(false)
+  const [hytaleCommandSending, setHytaleCommandSending] = useState(false)
   const [commandApiMissing, setCommandApiMissing] = useState(false)
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -69,6 +105,64 @@ export function ConsolePage() {
     setCommandError(null)
   }, [historyStorageKey])
 
+  useEffect(() => {
+    if (!id) {
+      setInstanceInfo(null)
+      return
+    }
+
+    let cancelled = false
+    getInstance(id)
+      .then((instance) => {
+        if (!cancelled) setInstanceInfo(instance)
+      })
+      .catch(() => {
+        if (!cancelled) setInstanceInfo(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  useEffect(() => {
+    if (!id || instanceInfo?.serverType !== 'hytale') {
+      setHytaleAuth(null)
+      return
+    }
+
+    let cancelled = false
+    const fetchAuth = async () => {
+      setHytaleAuthLoading(true)
+      setHytaleAuthError(null)
+      try {
+        const status = await getHytaleAuthStatus(id)
+        if (!cancelled) {
+          setHytaleAuth({
+            authenticated: status.authenticated,
+            deviceUrl: status.deviceUrl,
+            userCode: status.userCode,
+            matchedLine: status.matchedLine,
+          })
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : 'Failed to load auth status'
+          setHytaleAuthError(message)
+        }
+      } finally {
+        if (!cancelled) setHytaleAuthLoading(false)
+      }
+    }
+
+    fetchAuth()
+    const interval = setInterval(fetchAuth, 8000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [id, instanceInfo?.serverType])
+
   const persistHistory = useCallback(
     (entries: string[]) => {
       if (!historyStorageKey) return
@@ -77,15 +171,30 @@ export function ConsolePage() {
     [historyStorageKey],
   )
 
-  const appendLog = useCallback((line: string) => {
-    setLogs((prev) => {
-      const next = [...prev, line]
-      if (next.length > MAX_LOGS) {
-        next.splice(0, next.length - MAX_LOGS)
+  const appendLog = useCallback(
+    (line: string) => {
+      setLogs((prev) => {
+        const next = [...prev, line]
+        if (next.length > MAX_LOGS) {
+          next.splice(0, next.length - MAX_LOGS)
+        }
+        return next
+      })
+
+      if (instanceInfo?.serverType === 'hytale') {
+        const info = extractHytaleAuthInfo(line)
+        if (info) {
+          setHytaleAuth((prev) => ({
+            authenticated: info.authenticated || prev?.authenticated || false,
+            deviceUrl: info.deviceUrl ?? prev?.deviceUrl,
+            userCode: info.userCode ?? prev?.userCode,
+            matchedLine: info.matchedLine ?? prev?.matchedLine,
+          }))
+        }
       }
-      return next
-    })
-  }, [])
+    },
+    [instanceInfo?.serverType],
+  )
 
   useEffect(() => {
     if (!id) {
@@ -247,6 +356,21 @@ export function ConsolePage() {
     }
   }
 
+  const handleHytaleDeviceAuth = async () => {
+    if (!id) return
+    setHytaleCommandSending(true)
+    setHytaleAuthError(null)
+    try {
+      await sendCommand(id, '/auth login device')
+      appendLog('> /auth login device')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to send auth command'
+      setHytaleAuthError(message)
+    } finally {
+      setHytaleCommandSending(false)
+    }
+  }
+
   const quickActions = useMemo(
     () => [
       { label: 'stop', command: 'stop' },
@@ -310,6 +434,9 @@ export function ConsolePage() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h1>Console</h1>
@@ -334,6 +461,63 @@ export function ConsolePage() {
           </button>
         </div>
       </div>
+
+      {instanceInfo?.serverType === 'hytale' ? (
+        <div className="alert alert--muted">
+          <div className="page__cluster">
+            <strong>Authenticate server</strong>
+            <div>
+              Status:{' '}
+              {hytaleAuth?.authenticated ? (
+                <span className="badge badge--running">Authenticated</span>
+              ) : (
+                <span className="badge badge--warning">Not authenticated</span>
+              )}
+            </div>
+            <p className="page__hint">
+              Run <code>/auth login device</code> in the server console, then confirm the code at{' '}
+              <a href="https://accounts.hytale.com/device" target="_blank" rel="noreferrer">
+                accounts.hytale.com/device
+              </a>
+              . Limit: 100 servers per license.
+            </p>
+            {hytaleAuthLoading ? <div className="page__hint">Loading auth status…</div> : null}
+            {hytaleAuthError ? <div className="alert alert--error">{hytaleAuthError}</div> : null}
+            {hytaleAuth?.userCode || hytaleAuth?.deviceUrl ? (
+              <div className="page__hint">
+                {hytaleAuth?.deviceUrl ? (
+                  <div>
+                    URL:{' '}
+                    <a href={hytaleAuth.deviceUrl} target="_blank" rel="noreferrer">
+                      {hytaleAuth.deviceUrl}
+                    </a>
+                  </div>
+                ) : null}
+                {hytaleAuth?.userCode ? <div>Code: {hytaleAuth.userCode}</div> : null}
+              </div>
+            ) : null}
+            <div className="actions actions--inline">
+              <button
+                className="btn"
+                onClick={handleHytaleDeviceAuth}
+                disabled={hytaleCommandSending || instanceStatus !== 'running'}
+              >
+                {hytaleCommandSending ? 'Sending…' : 'Console Quick Command'}
+              </button>
+              <button
+                className="btn btn--secondary"
+                type="button"
+                onClick={() => window.open('https://accounts.hytale.com/device', '_blank', 'noreferrer')}
+              >
+                Open Auth Instructions
+              </button>
+              <button className="btn btn--secondary" onClick={() => setHytaleAuth(null)}>
+                Clear Auth Info
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="console__log" ref={logContainerRef}>
         {logs.length === 0 ? (

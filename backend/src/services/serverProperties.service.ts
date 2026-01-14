@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import { getInstanceServerDir } from '../config/paths'
+import { InstanceConfig } from '../core/types'
 
 export const DEFAULT_SERVER_PORT = 25565
 
@@ -47,6 +48,13 @@ export const extractMaxPlayers = (properties?: ServerProperties | null): number 
 export const resolveServerPort = async (id: string): Promise<number> => {
   const properties = await readServerProperties(id)
   return extractServerPort(properties) ?? DEFAULT_SERVER_PORT
+}
+
+export const resolveServerPortForInstance = async (instance: InstanceConfig): Promise<number> => {
+  if (instance.serverType === 'hytale') {
+    return instance.hytale?.port ?? 5520
+  }
+  return resolveServerPort(instance.id)
 }
 
 export const resolveMaxPlayers = async (id: string): Promise<number | null> => {

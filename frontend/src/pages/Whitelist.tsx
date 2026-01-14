@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import BackButton from '../components/BackButton'
 import { addWhitelistEntry, getWhitelist, removeWhitelistEntry, WhitelistEntry } from '../api'
 
 export function WhitelistPage() {
@@ -82,6 +83,9 @@ export function WhitelistPage() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h1>Whitelist</h1>

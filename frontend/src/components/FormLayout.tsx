@@ -47,16 +47,26 @@ interface FormToggleProps {
   checked: boolean
   onChange: (value: boolean) => void
   disabled?: boolean
+  showLabel?: boolean
+  ariaLabel?: string
 }
 
-export function FormToggle({ label, description, checked, onChange, disabled }: FormToggleProps) {
+export function FormToggle({ label, description, checked, onChange, disabled, showLabel = true, ariaLabel }: FormToggleProps) {
   return (
-    <label className="form-toggle">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} />
-      <div>
-        <span className="form-toggle__label">{label}</span>
-        {description ? <p className="form-help">{description}</p> : null}
-      </div>
+    <label className={`form-toggle${!showLabel ? ' form-toggle--compact' : ''}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+        aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
+      />
+      {showLabel ? (
+        <div>
+          <span className="form-toggle__label">{label}</span>
+          {description ? <p className="form-help">{description}</p> : null}
+        </div>
+      ) : null}
     </label>
   )
 }

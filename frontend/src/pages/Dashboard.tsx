@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import BackButton from '../components/BackButton'
 import {
   CreateInstancePayload,
+  HytaleInstallMode,
   Instance,
   InstanceMetrics,
   InstanceStatus,
@@ -94,6 +96,10 @@ export function Dashboard() {
   const [createServerType, setCreateServerType] = useState<ServerType | ''>('')
   const [minecraftVersion, setMinecraftVersion] = useState('')
   const [loaderVersion, setLoaderVersion] = useState('')
+  const [hytaleInstallMode, setHytaleInstallMode] = useState<HytaleInstallMode>('downloader')
+  const [hytaleDownloaderUrl, setHytaleDownloaderUrl] = useState('')
+  const [hytaleImportServerPath, setHytaleImportServerPath] = useState('')
+  const [hytaleImportAssetsPath, setHytaleImportAssetsPath] = useState('')
   const [loaderOptions, setLoaderOptions] = useState<string[]>([])
   const [catalogVersions, setCatalogVersions] = useState<string[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -125,6 +131,9 @@ export function Dashboard() {
   )
 
   const isBusy = useMemo(() => loading || Boolean(activeAction), [loading, activeAction])
+  const isHytale = createServerType === 'hytale'
+  const usesCatalog = Boolean(createServerType) && !isHytale
+
   const requiresLoader = useMemo(
     () =>
       createServerType === 'fabric' ||
@@ -139,10 +148,25 @@ export function Dashboard() {
     [loaderOptions.length, loaderVersionsByMinecraft, requiresLoader],
   )
   const createDisabled = useMemo(() => {
-    if (!createName.trim() || !createServerType || !minecraftVersion) return true
+    if (!createName.trim() || !createServerType) return true
+    if (!isHytale && !minecraftVersion) return true
+    if (isHytale && hytaleInstallMode === 'import') {
+      if (!hytaleImportServerPath.trim() || !hytaleImportAssetsPath.trim()) return true
+    }
     if (showLoaderSelect && !loaderVersion) return true
     return creating
-  }, [createName, createServerType, creating, loaderVersion, minecraftVersion, showLoaderSelect])
+  }, [
+    createName,
+    createServerType,
+    creating,
+    hytaleImportAssetsPath,
+    hytaleImportServerPath,
+    hytaleInstallMode,
+    isHytale,
+    loaderVersion,
+    minecraftVersion,
+    showLoaderSelect,
+  ])
 
   const runningCount = useMemo(
     () => instances.filter((instance) => statusByInstanceId[instance.id]?.status === 'running').length,
@@ -243,6 +267,13 @@ export function Dashboard() {
       loader: instance.loader,
     }
 
+    if (instance.serverType === 'hytale') {
+      prepareOptions.hytaleInstallMode = instance.hytale?.install?.mode ?? 'downloader'
+      prepareOptions.hytaleDownloaderUrl = instance.hytale?.install?.downloaderUrl
+      prepareOptions.hytaleImportServerPath = instance.hytale?.install?.importServerPath
+      prepareOptions.hytaleImportAssetsPath = instance.hytale?.install?.importAssetsPath
+    }
+
     updatePrepareState(instance.id, 'preparing')
     const result = await prepareInstance(instance.id, prepareOptions)
 
@@ -332,7 +363,7 @@ export function Dashboard() {
   }, [])
 
   useEffect(() => {
-    if (!createServerType) {
+    if (!createServerType || !usesCatalog) {
       setCatalogVersions([])
       setLoaderOptions([])
       setLoaderVersionsByMinecraft({})
@@ -366,7 +397,7 @@ export function Dashboard() {
     }
 
     loadCatalog()
-  }, [createServerType])
+  }, [createServerType, usesCatalog])
 
   useEffect(() => {
     if (!requiresLoader) {
@@ -386,6 +417,10 @@ export function Dashboard() {
     setCreateServerType('')
     setMinecraftVersion('')
     setLoaderVersion('')
+    setHytaleInstallMode('downloader')
+    setHytaleDownloaderUrl('')
+    setHytaleImportServerPath('')
+    setHytaleImportAssetsPath('')
     setLoaderOptions([])
     setCatalogVersions([])
     setCatalogError(null)
@@ -405,7 +440,18 @@ export function Dashboard() {
     const payload: CreateInstancePayload = {
       name: trimmedName,
       serverType: createServerType,
-      minecraftVersion,
+      minecraftVersion: createServerType === 'hytale' ? undefined : minecraftVersion,
+    }
+
+    if (createServerType === 'hytale') {
+      payload.hytale = {
+        install: {
+          mode: hytaleInstallMode,
+          downloaderUrl: hytaleDownloaderUrl.trim() || undefined,
+          importServerPath: hytaleImportServerPath.trim() || undefined,
+          importAssetsPath: hytaleImportAssetsPath.trim() || undefined,
+        },
+      }
     }
 
     if (requiresLoader) {
@@ -427,6 +473,10 @@ export function Dashboard() {
       setCreateServerType('')
       setMinecraftVersion('')
       setLoaderVersion('')
+      setHytaleInstallMode('downloader')
+      setHytaleDownloaderUrl('')
+      setHytaleImportServerPath('')
+      setHytaleImportAssetsPath('')
       updatePrepareState(created.id, 'preparing')
       await fetchInstances()
       await refreshInstanceStatus(created.id)
@@ -466,6 +516,9 @@ export function Dashboard() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h1>Dashboard</h1>
@@ -582,10 +635,12 @@ export function Dashboard() {
                   <dt>Server Type</dt>
                   <dd>{instance.serverType}</dd>
                 </div>
-                <div className="instance-card__detail">
-                  <dt>Minecraft Version</dt>
-                  <dd>{instance.minecraftVersion ?? '—'}</dd>
-                </div>
+                {instance.serverType !== 'hytale' ? (
+                  <div className="instance-card__detail">
+                    <dt>Minecraft Version</dt>
+                    <dd>{instance.minecraftVersion ?? '—'}</dd>
+                  </div>
+                ) : null}
                 {instance.loader?.version ? (
                   <div className="instance-card__detail">
                     <dt>Loader</dt>
@@ -598,7 +653,10 @@ export function Dashboard() {
                 </div>
                 <div className="instance-card__detail">
                   <dt>Port</dt>
-                  <dd>{instance.serverPort ?? '—'}</dd>
+                  <dd>
+                    {instance.serverPort ?? '—'}
+                    {instance.serverType === 'hytale' && instance.serverPort ? ' (UDP)' : null}
+                  </dd>
                 </div>
                 <div className="instance-card__detail">
                   <dt>Preparation</dt>
@@ -751,6 +809,12 @@ export function Dashboard() {
                       setCreateServerType(value)
                       setMinecraftVersion('')
                       setLoaderVersion('')
+                      if (value === 'hytale') {
+                        setHytaleInstallMode('downloader')
+                        setHytaleDownloaderUrl('')
+                        setHytaleImportServerPath('')
+                        setHytaleImportAssetsPath('')
+                      }
                     }}
                     required
                   >
@@ -762,35 +826,95 @@ export function Dashboard() {
                     <option value="fabric">Fabric</option>
                     <option value="forge">Forge</option>
                     <option value="neoforge">NeoForge</option>
+                    <option value="hytale">Hytale</option>
                   </select>
                 </label>
 
-                <label className="form__field">
-                  <span>Minecraft Version *</span>
-                  <select
-                    value={minecraftVersion}
-                    onChange={(event) => {
-                      setMinecraftVersion(event.target.value)
-                      setLoaderVersion('')
-                    }}
-                    disabled={!createServerType || catalogLoading}
-                    required
-                  >
-                    <option value="" disabled>
-                      {createServerType
-                        ? catalogLoading
-                          ? 'Loading versions…'
-                          : 'Select version'
-                        : 'Choose server type first'}
-                    </option>
-                    {catalogVersions.map((version) => (
-                      <option key={version} value={version}>
-                        {version}
+                {!isHytale ? (
+                  <label className="form__field">
+                    <span>Minecraft Version *</span>
+                    <select
+                      value={minecraftVersion}
+                      onChange={(event) => {
+                        setMinecraftVersion(event.target.value)
+                        setLoaderVersion('')
+                      }}
+                      disabled={!createServerType || catalogLoading}
+                      required
+                    >
+                      <option value="" disabled>
+                        {createServerType
+                          ? catalogLoading
+                            ? 'Loading versions…'
+                            : 'Select version'
+                          : 'Choose server type first'}
                       </option>
-                    ))}
-                  </select>
-                </label>
+                      {catalogVersions.map((version) => (
+                        <option key={version} value={version}>
+                          {version}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <div className="alert alert--muted">
+                    Hytale uses the default UDP port 5520. Configure additional settings after creation.
+                  </div>
+                )}
               </div>
+
+              {isHytale ? (
+                <>
+                  <label className="form__field">
+                    <span>Install Mode *</span>
+                    <select
+                      value={hytaleInstallMode}
+                      onChange={(event) =>
+                        setHytaleInstallMode(event.target.value as HytaleInstallMode)
+                      }
+                      required
+                    >
+                      <option value="downloader">Downloader CLI (recommended)</option>
+                      <option value="import">Import existing files</option>
+                    </select>
+                  </label>
+
+                  {hytaleInstallMode === 'downloader' ? (
+                    <label className="form__field">
+                      <span>Downloader URL (optional)</span>
+                      <input
+                        type="text"
+                        value={hytaleDownloaderUrl}
+                        onChange={(event) => setHytaleDownloaderUrl(event.target.value)}
+                        placeholder="https://example.com/hytale-downloader.zip"
+                      />
+                    </label>
+                  ) : (
+                    <div className="form__inline">
+                      <label className="form__field">
+                        <span>Server Folder Path *</span>
+                        <input
+                          type="text"
+                          value={hytaleImportServerPath}
+                          onChange={(event) => setHytaleImportServerPath(event.target.value)}
+                          placeholder="/path/to/Server"
+                          required
+                        />
+                      </label>
+                      <label className="form__field">
+                        <span>Assets.zip Path *</span>
+                        <input
+                          type="text"
+                          value={hytaleImportAssetsPath}
+                          onChange={(event) => setHytaleImportAssetsPath(event.target.value)}
+                          placeholder="/path/to/Assets.zip"
+                          required
+                        />
+                      </label>
+                    </div>
+                  )}
+                </>
+              ) : null}
 
               {showLoaderSelect ? (
                 <label className="form__field">

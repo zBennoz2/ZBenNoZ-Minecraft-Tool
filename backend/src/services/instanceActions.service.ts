@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import path from 'path'
 import { InstanceManager } from '../core/InstanceManager'
 import { LogService } from '../core/LogService'
 import { InstanceConfig, InstanceStatus } from '../core/types'
@@ -53,6 +54,10 @@ const ensureEulaAccepted = async (id: string, instance: InstanceConfig) => {
 }
 
 const ensureStartupTarget = async (id: string, instance: InstanceConfig) => {
+  if (instance.serverType === 'hytale') {
+    return
+  }
+
   if (instance.startup?.mode === 'script') {
     const scriptPath = instance.startup.script ? getInstanceJarPath(id, instance.startup.script) : null
     if (!scriptPath) {
@@ -90,16 +95,53 @@ const ensureStartupTarget = async (id: string, instance: InstanceConfig) => {
   }
 }
 
+const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
+  const serverDir = getInstanceServerDir(id)
+  const jarFileName = instance.serverJar && instance.serverJar.trim() ? instance.serverJar : 'HytaleServer.jar'
+  const jarPath = path.join(serverDir, jarFileName)
+  const assetsPath = path.join(serverDir, instance.hytale?.assetsPath ?? 'Assets.zip')
+
+  try {
+    await fs.access(jarPath)
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
+      throw new InstanceActionError(409, {
+        error: `Hytale server jar not found. Expected ${jarFileName} in ${serverDir}.`,
+        expectedJar: jarFileName,
+        serverDir,
+      })
+    }
+    throw error
+  }
+
+  try {
+    await fs.access(assetsPath)
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
+      throw new InstanceActionError(409, {
+        error: `Assets.zip not found. Expected Assets.zip in ${serverDir}.`,
+        expectedAssets: assetsPath,
+        serverDir,
+      })
+    }
+    throw error
+  }
+}
+
 const performStart = async (
   id: string,
   instance: InstanceConfig,
   javaResolution: { javaBin: string; javaHome?: string },
 ) => {
-  const startMinecraft = instance.serverType !== 'modded'
+  const startMinecraft = instance.serverType !== 'modded' && instance.serverType !== 'hytale'
 
   if (startMinecraft) {
     await ensureEulaAccepted(id, instance)
     await ensureStartupTarget(id, instance)
+  }
+
+  if (instance.serverType === 'hytale') {
+    await ensureHytaleFiles(id, instance)
   }
 
   updateStatus(id, 'starting', null)

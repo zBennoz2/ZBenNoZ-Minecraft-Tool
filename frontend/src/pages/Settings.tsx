@@ -11,6 +11,8 @@ import {
   getInstance,
   getInstanceStatus,
   InstanceUpdatePayload,
+  checkHytaleVersion,
+  updateHytaleServer,
   startInstance,
   stopInstance,
   updateInstance,
@@ -25,6 +27,7 @@ import {
   getBackupJob,
 } from '../api'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
+import BackButton from '../components/BackButton'
 
 interface SettingsFormState {
   name: string
@@ -36,10 +39,17 @@ interface SettingsFormState {
   autoAcceptEula: boolean
   startupMode?: InstanceStartupConfig['mode']
   startupArgs: string
+  hytalePort: string
+  hytaleBind: string
+  hytaleAssetsPath: string
+  hytaleAuthMode: 'authenticated' | 'offline'
+  hytaleJvmArgs: string
+  hytaleDownloaderUrl: string
 }
 
 interface ValidationState {
   memoryMax?: string
+  hytalePort?: string
 }
 
 const normalizeMemoryInput = (input: string): { value?: string; error?: string } => {
@@ -58,6 +68,16 @@ const normalizeMemoryInput = (input: string): { value?: string; error?: string }
   return { value: `${amount}${unit}` }
 }
 
+const validatePort = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return 'Port darf nicht leer sein'
+  const numeric = Number(trimmed)
+  if (!Number.isInteger(numeric) || numeric < 1 || numeric > 65535) {
+    return 'Port muss zwischen 1 und 65535 liegen'
+  }
+  return undefined
+}
+
 const buildFormState = (instance: Instance): SettingsFormState => ({
   name: instance.name,
   serverType: instance.serverType,
@@ -68,6 +88,12 @@ const buildFormState = (instance: Instance): SettingsFormState => ({
   autoAcceptEula: instance.autoAcceptEula !== false,
   startupMode: instance.startup?.mode,
   startupArgs: (instance.startup?.args ?? []).join(' '),
+  hytalePort: String(instance.hytale?.port ?? 5520),
+  hytaleBind: instance.hytale?.bind ?? '0.0.0.0',
+  hytaleAssetsPath: instance.hytale?.assetsPath ?? 'Assets.zip',
+  hytaleAuthMode: instance.hytale?.authMode ?? 'authenticated',
+  hytaleJvmArgs: (instance.hytale?.jvmArgs ?? []).join(' '),
+  hytaleDownloaderUrl: instance.hytale?.install?.downloaderUrl ?? '',
 })
 
 const isRestartRelevantChange = (a: SettingsFormState, b: SettingsFormState) => {
@@ -76,7 +102,13 @@ const isRestartRelevantChange = (a: SettingsFormState, b: SettingsFormState) => 
     a.javaPath.trim() !== b.javaPath.trim() ||
     a.nogui !== b.nogui ||
     ((a.startupMode === 'script' || b.startupMode === 'script') &&
-      a.startupArgs.trim() !== b.startupArgs.trim())
+      a.startupArgs.trim() !== b.startupArgs.trim()) ||
+    (a.serverType === 'hytale' &&
+      (a.hytalePort.trim() !== b.hytalePort.trim() ||
+        a.hytaleBind.trim() !== b.hytaleBind.trim() ||
+        a.hytaleAssetsPath.trim() !== b.hytaleAssetsPath.trim() ||
+        a.hytaleAuthMode !== b.hytaleAuthMode ||
+        a.hytaleJvmArgs.trim() !== b.hytaleJvmArgs.trim()))
   )
 }
 
@@ -142,6 +174,10 @@ export function SettingsPage() {
   const [restoreOptions, setRestoreOptions] = useState({ forceStop: false, preRestoreSnapshot: false, autoStart: false })
   const [restoreInFlight, setRestoreInFlight] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [hytaleVersion, setHytaleVersion] = useState<string | null>(null)
+  const [hytaleVersionError, setHytaleVersionError] = useState<string | null>(null)
+  const [hytaleChecking, setHytaleChecking] = useState(false)
+  const [hytaleUpdating, setHytaleUpdating] = useState(false)
 
   const isDirty = useMemo(() => {
     if (!form || !initialForm) return false
@@ -263,6 +299,36 @@ export function SettingsPage() {
     }
   }
 
+  const handleCheckHytaleVersion = async () => {
+    if (!id) return
+    setHytaleChecking(true)
+    setHytaleVersionError(null)
+    try {
+      const result = await checkHytaleVersion(id)
+      setHytaleVersion(result.version)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to check version'
+      setHytaleVersionError(message)
+    } finally {
+      setHytaleChecking(false)
+    }
+  }
+
+  const handleUpdateHytale = async () => {
+    if (!id) return
+    setHytaleUpdating(true)
+    setHytaleVersionError(null)
+    try {
+      await updateHytaleServer(id)
+      setHytaleVersion('Updated (check version to confirm)')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update server'
+      setHytaleVersionError(message)
+    } finally {
+      setHytaleUpdating(false)
+    }
+  }
+
   const handleRestore = async (backupId: string) => {
     if (!id) return
     setBackupError(null)
@@ -337,6 +403,10 @@ export function SettingsPage() {
       setInitialForm(nextForm)
       setInstanceSnapshot(instanceData)
       setStatus(statusData.status ?? 'unknown')
+      if (instanceData.serverType !== 'hytale') {
+        setHytaleVersion(null)
+        setHytaleVersionError(null)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load settings'
       setError(message)
@@ -367,6 +437,14 @@ export function SettingsPage() {
     if (normalizedMemory.error || !normalizedMemory.value) {
       setValidation((prev) => ({ ...prev, memoryMax: normalizedMemory.error }))
       return
+    }
+
+    if (form.serverType === 'hytale') {
+      const portError = validatePort(form.hytalePort)
+      if (portError) {
+        setValidation((prev) => ({ ...prev, hytalePort: portError }))
+        return
+      }
     }
 
     setSaving(true)
@@ -405,6 +483,37 @@ export function SettingsPage() {
     if (form.startupArgs.trim() !== initialForm.startupArgs.trim()) {
       payload.startup = { ...(instanceSnapshot.startup ?? { mode: form.startupMode ?? 'jar' }) }
       payload.startup.args = parsedArgs
+    }
+
+    if (form.serverType === 'hytale') {
+      const hytaleJvmArgs = form.hytaleJvmArgs
+        .split(' ')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+
+      const nextPort = Number(form.hytalePort)
+      const hytaleChanged =
+        form.hytalePort.trim() !== initialForm.hytalePort.trim() ||
+        form.hytaleBind.trim() !== initialForm.hytaleBind.trim() ||
+        form.hytaleAssetsPath.trim() !== initialForm.hytaleAssetsPath.trim() ||
+        form.hytaleAuthMode !== initialForm.hytaleAuthMode ||
+        form.hytaleJvmArgs.trim() !== initialForm.hytaleJvmArgs.trim() ||
+        form.hytaleDownloaderUrl.trim() !== initialForm.hytaleDownloaderUrl.trim()
+
+      if (hytaleChanged) {
+        payload.hytale = {
+          ...(instanceSnapshot.hytale ?? {}),
+          port: Number.isFinite(nextPort) ? nextPort : 5520,
+          bind: form.hytaleBind.trim() || '0.0.0.0',
+          assetsPath: form.hytaleAssetsPath.trim() || 'Assets.zip',
+          authMode: form.hytaleAuthMode,
+          jvmArgs: hytaleJvmArgs,
+          install: {
+            ...(instanceSnapshot.hytale?.install ?? {}),
+            downloaderUrl: form.hytaleDownloaderUrl.trim() || undefined,
+          },
+        }
+      }
     }
 
     try {
@@ -468,6 +577,9 @@ export function SettingsPage() {
   if (loading) {
     return (
       <section className="page">
+        <div className="page__toolbar">
+          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        </div>
         <div className="page__header page__header--spread">
           <div>
             <h1>Settings</h1>
@@ -482,6 +594,9 @@ export function SettingsPage() {
   if (error) {
     return (
       <section className="page">
+        <div className="page__toolbar">
+          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        </div>
         <div className="page__header page__header--spread">
           <div>
             <h1>Settings</h1>
@@ -504,6 +619,9 @@ export function SettingsPage() {
 
   return (
     <section className="page">
+      <div className="page__toolbar">
+        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+      </div>
       <div className="page__header page__header--spread">
         <div>
           <h1>Settings</h1>
@@ -559,9 +677,11 @@ export function SettingsPage() {
           <FormRow label="Server Type">
             <input type="text" value={form.serverType} readOnly />
           </FormRow>
-          <FormRow label="Minecraft Version">
-            <input type="text" value={form.minecraftVersion ?? '—'} readOnly />
-          </FormRow>
+          {form.serverType !== 'hytale' ? (
+            <FormRow label="Minecraft Version">
+              <input type="text" value={form.minecraftVersion ?? '—'} readOnly />
+            </FormRow>
+          ) : null}
         </FormSection>
 
         <FormSection title="Resources">
@@ -599,6 +719,101 @@ export function SettingsPage() {
           </FormRow>
         </FormSection>
 
+        {form.serverType === 'hytale' ? (
+          <FormSection
+            title="Hytale Server"
+            description="UDP Port 5520 standard. Authentifizierung benötigt Device-Code-Flow."
+            actions={
+              <div className="actions actions--inline">
+                <button className="btn" onClick={handleCheckHytaleVersion} disabled={hytaleChecking}>
+                  {hytaleChecking ? 'Checking…' : 'Check version'}
+                </button>
+                <button
+                  className="btn btn--secondary"
+                  onClick={handleUpdateHytale}
+                  disabled={hytaleUpdating}
+                >
+                  {hytaleUpdating ? 'Updating…' : 'Update'}
+                </button>
+              </div>
+            }
+          >
+            {hytaleVersion ? <div className="alert alert--muted">Version: {hytaleVersion}</div> : null}
+            {hytaleVersionError ? <div className="alert alert--error">{hytaleVersionError}</div> : null}
+            <FormRow label="Port (UDP)">
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={form.hytalePort}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytalePort: event.target.value } : prev))
+                }
+                onBlur={(event) =>
+                  setValidation((prev) => ({ ...prev, hytalePort: validatePort(event.target.value) }))
+                }
+              />
+              {validation.hytalePort ? (
+                <small className="form__error">{validation.hytalePort}</small>
+              ) : null}
+            </FormRow>
+            <FormRow label="Bind Address">
+              <input
+                type="text"
+                value={form.hytaleBind}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytaleBind: event.target.value } : prev))
+                }
+                placeholder="0.0.0.0"
+              />
+            </FormRow>
+            <FormRow label="Assets Path">
+              <input
+                type="text"
+                value={form.hytaleAssetsPath}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytaleAssetsPath: event.target.value } : prev))
+                }
+                placeholder="Assets.zip"
+              />
+            </FormRow>
+            <FormRow label="Auth Mode">
+              <select
+                value={form.hytaleAuthMode}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytaleAuthMode: event.target.value as 'authenticated' | 'offline' } : prev))
+                }
+              >
+                <option value="authenticated">Authenticated</option>
+                <option value="offline">Offline (manual)</option>
+              </select>
+            </FormRow>
+            <FormRow label="JVM Args" help="Argumente durch Leerzeichen trennen">
+              <input
+                type="text"
+                value={form.hytaleJvmArgs}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytaleJvmArgs: event.target.value } : prev))
+                }
+                placeholder="-Xms2G -Xmx4G"
+              />
+            </FormRow>
+            <FormRow label="Downloader URL">
+              <input
+                type="text"
+                value={form.hytaleDownloaderUrl}
+                onChange={(event) =>
+                  setForm((prev) => (prev ? { ...prev, hytaleDownloaderUrl: event.target.value } : prev))
+                }
+                placeholder="https://example.com/hytale-downloader.zip"
+              />
+            </FormRow>
+            <div className="page__hint">
+              Auth: Nach dem ersten Start im Console-Tab <code>/auth login device</code> ausführen und den Code auf accounts.hytale.com/device bestätigen.
+            </div>
+          </FormSection>
+        ) : null}
+
         <FormSection title="Startup">
           <FormRow label="nogui">
             <FormToggle label="Server ohne GUI starten" checked={form.nogui} onChange={() => handleToggle('nogui')} />
@@ -623,22 +838,28 @@ export function SettingsPage() {
           </FormRow>
         </FormSection>
 
-        <FormSection title="EULA">
-          <FormRow
-            label="Automatisch akzeptieren"
-            help="Wenn aktiviert, schreibt das Panel eula=true vor dem Start."
-          >
-            <FormToggle
-              label="EULA zustimmen"
-              checked={form.autoAcceptEula}
-              onChange={() => handleToggle('autoAcceptEula')}
-            />
-          </FormRow>
-        </FormSection>
+        {form.serverType !== 'hytale' ? (
+          <FormSection title="EULA">
+            <FormRow
+              label="Automatisch akzeptieren"
+              help="Wenn aktiviert, schreibt das Panel eula=true vor dem Start."
+            >
+              <FormToggle
+                label="EULA zustimmen"
+                checked={form.autoAcceptEula}
+                onChange={() => handleToggle('autoAcceptEula')}
+              />
+            </FormRow>
+          </FormSection>
+        ) : null}
 
         <FormSection
           title="Sleep Mode"
-          description="Stoppt inaktive Server automatisch und weckt sie durch Minecraft-Statuspings."
+          description={
+            form.serverType === 'hytale'
+              ? 'Stoppt inaktive Server. Wake-on-ping ist aktuell nur für Minecraft-Statuspings verfügbar.'
+              : 'Stoppt inaktive Server automatisch und weckt sie durch Minecraft-Statuspings.'
+          }
           actions={
             <div className="actions actions--inline">
               <button className="btn" onClick={saveSleep} disabled={sleepLoading || sleepSaving}>

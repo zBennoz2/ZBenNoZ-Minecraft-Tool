@@ -1,19 +1,19 @@
 import path from 'node:path';
 import { getInstanceServerDir } from '../config/paths';
+import { getAdapterForInstance } from './adapters';
+import { StartSpec } from './StartSpec';
 import { InstanceConfig } from './types';
-
-export interface StartSpec {
-  command: string;
-  args: string[];
-  cwd: string;
-  env?: NodeJS.ProcessEnv;
-}
 
 export const buildStartSpec = (
   instance: InstanceConfig,
   instanceId: string,
   javaResolution?: { javaBin: string; javaHome?: string },
 ): StartSpec => {
+  const adapter = getAdapterForInstance(instance);
+  if (adapter?.type === 'hytale') {
+    return adapter.buildStartSpec(instance, instanceId, javaResolution);
+  }
+
   if (instance.serverType === 'modded') {
     return {
       command: process.execPath,

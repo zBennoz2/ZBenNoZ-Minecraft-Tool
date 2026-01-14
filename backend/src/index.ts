@@ -20,6 +20,7 @@ import { pingWakeService } from './services/pingWake.service';
 import playersRouter from './api/players';
 import licenseRouter, { licenseGuardMiddleware } from './api/license';
 import systemRouter from './api/system';
+import hytaleRouter from './api/hytale';
 import pkg from '../package.json';
 
 const app = express();
@@ -178,6 +179,7 @@ apiRouter.use('/', javaRouter);
 apiRouter.use('/instances', sleepRouter);
 apiRouter.use('/instances', backupsRouter);
 apiRouter.use('/system', systemRouter);
+apiRouter.use('/instances', hytaleRouter);
 
 app.use('/api', apiRouter);
 

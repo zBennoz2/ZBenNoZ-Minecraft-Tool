@@ -117,7 +117,8 @@ const buildFallback = (
 })
 
 const resolvePlayerMetrics = async (
-  id: string,
+  instanceId: string,
+  instanceType: string,
   isRunning: boolean,
 ): Promise<{
   playersOnline: number | null
@@ -125,12 +126,23 @@ const resolvePlayerMetrics = async (
   latencyMs: number | null
   playersSource: InstanceMetricsResponse['playersSource']
 }> => {
-  const cached = playerMetricsCache.get(id)
+  const cached = playerMetricsCache.get(instanceId)
   if (cached && Date.now() - cached.timestamp < PLAYER_CACHE_WINDOW_MS) {
     return cached.data
   }
 
-  const properties = await readServerProperties(id)
+  if (instanceType === 'hytale') {
+    const metrics = {
+      playersOnline: null,
+      playersMax: null,
+      latencyMs: null,
+      playersSource: 'unavailable' as const,
+    }
+    playerMetricsCache.set(instanceId, { timestamp: Date.now(), data: metrics })
+    return metrics
+  }
+
+  const properties = await readServerProperties(instanceId)
   const maxPlayers = extractMaxPlayers(properties)
   const port = extractServerPort(properties) ?? DEFAULT_SERVER_PORT
 
@@ -141,7 +153,7 @@ const resolvePlayerMetrics = async (
       latencyMs: null,
       playersSource: 'fallback' as const,
     }
-    playerMetricsCache.set(id, { timestamp: Date.now(), data: metrics })
+    playerMetricsCache.set(instanceId, { timestamp: Date.now(), data: metrics })
     return metrics
   }
 
@@ -157,17 +169,17 @@ const resolvePlayerMetrics = async (
       latencyMs: typeof result?.latencyMs === 'number' ? result.latencyMs : null,
       playersSource: 'query' as const,
     }
-    playerMetricsCache.set(id, { timestamp: Date.now(), data: metrics })
+    playerMetricsCache.set(instanceId, { timestamp: Date.now(), data: metrics })
     return metrics
   } catch (error) {
-    console.error(`Failed to query players for ${id}:${port}`, error)
+    console.error(`Failed to query players for ${instanceId}:${port}`, error)
     const metrics = {
       playersOnline: null,
       playersMax: maxPlayers,
       latencyMs: null,
       playersSource: 'unavailable' as const,
     }
-    playerMetricsCache.set(id, { timestamp: Date.now(), data: metrics })
+    playerMetricsCache.set(instanceId, { timestamp: Date.now(), data: metrics })
     return metrics
   }
 }
@@ -199,7 +211,7 @@ router.get('/:id/metrics', async (req: Request, res: Response) => {
       return res.json(cached.data)
     }
 
-    const playerMetrics = await resolvePlayerMetrics(id, isRunning)
+    const playerMetrics = await resolvePlayerMetrics(id, instance.serverType, isRunning)
     updateOnlinePlayers(id, playerMetrics.playersOnline ?? (isRunning ? null : 0))
 
     if (!pid || !isRunning) {

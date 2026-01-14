@@ -1,7 +1,7 @@
 {
   "name": "minecraft-amp",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "main": "electron/main.js",
   "scripts": {
     "dev:backend": "npm --prefix backend run dev",

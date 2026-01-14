@@ -1,4 +1,4 @@
-export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge' | 'modded';
+export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge' | 'modded' | 'hytale';
 
 export type LoaderType = 'fabric' | 'forge' | 'neoforge';
 
@@ -19,6 +19,24 @@ export interface StartupConfig {
   mode: 'jar' | 'script';
   script?: string;
   args?: string[];
+}
+
+export type HytaleAuthMode = 'authenticated' | 'offline';
+
+export interface HytaleInstallConfig {
+  mode?: 'downloader' | 'import';
+  downloaderUrl?: string;
+  importServerPath?: string;
+  importAssetsPath?: string;
+}
+
+export interface HytaleConfig {
+  assetsPath?: string;
+  bind?: string;
+  port?: number;
+  authMode?: HytaleAuthMode;
+  jvmArgs?: string[];
+  install?: HytaleInstallConfig;
 }
 
 export interface InstanceBase {
@@ -52,6 +70,7 @@ export interface InstanceConfig extends InstanceBase {
   pluginToken?: string;
   pluginPort?: number;
   serverPort?: number;
+  hytale?: HytaleConfig;
 }
 
 export interface SleepSettings {
