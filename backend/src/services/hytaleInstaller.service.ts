@@ -4,6 +4,7 @@ import path from 'path';
 import extract from 'extract-zip';
 import { getInstallerCacheDir, getInstanceDir, getInstanceServerDir } from '../config/paths';
 import { DownloadService } from '../core/DownloadService';
+import { parseHytaleAuthLine, updateHytaleAuthStatus } from './hytaleAuth.service';
 
 const HYTALE_DOWNLOADER_ENV = 'HYTALE_DOWNLOADER_URL';
 const HYTALE_DOWNLOADER_ARCHIVE = 'hytale-downloader.zip';
@@ -39,31 +40,6 @@ export interface HytaleInstallResult {
 
 const ensureDir = async (dirPath: string) => {
   await fs.mkdir(dirPath, { recursive: true });
-};
-
-const runCommand = async (
-  command: string,
-  args: string[],
-  cwd: string,
-  log?: LogFn,
-  env?: NodeJS.ProcessEnv,
-): Promise<void> => {
-  await log?.(`Running: ${command} ${args.join(' ')}`);
-  const child = spawn(command, args, { cwd, env });
-
-  child.stdout?.on('data', async (chunk) => log?.(chunk.toString().trimEnd()));
-  child.stderr?.on('data', async (chunk) => log?.(chunk.toString().trimEnd()));
-
-  return new Promise((resolve, reject) => {
-    child.once('exit', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`Command failed with exit code ${code}`));
-      }
-    });
-    child.once('error', (error) => reject(error));
-  });
 };
 
 const normalizeCandidate = (value?: string | null) => {
@@ -384,6 +360,169 @@ const ensureEmptyDir = async (dir: string, overwrite: boolean) => {
   }
 };
 
+const sanitizeCredentialsFile = async (credentialsPath: string, log?: LogFn) => {
+  try {
+    const stat = await fs.stat(credentialsPath);
+    if (!stat.isFile() || stat.size < 5) {
+      await log?.('Removing empty or invalid Hytale credentials file.');
+      await fs.rm(credentialsPath, { force: true });
+      return;
+    }
+    const raw = await fs.readFile(credentialsPath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
+    if (keys.length === 0) {
+      await log?.('Removing incomplete Hytale credentials file.');
+      await fs.rm(credentialsPath, { force: true });
+    }
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return;
+    await log?.(`Failed to validate Hytale credentials file: ${error?.message ?? 'unknown error'}`);
+    try {
+      await fs.rm(credentialsPath, { force: true });
+      await log?.('Removed invalid Hytale credentials file. A new one will be created on next auth.');
+    } catch {
+      // ignore cleanup failures
+    }
+  }
+};
+
+const parseProgress = (line: string): number | null => {
+  const match = line.match(/(\d{1,3})%/);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(value) || value < 0 || value > 100) return null;
+  return value;
+};
+
+const runDownloaderWithStatus = async (
+  instanceId: string,
+  command: string,
+  args: string[],
+  cwd: string,
+  log?: LogFn,
+  env?: NodeJS.ProcessEnv,
+): Promise<void> => {
+  await log?.(`Running: ${command} ${args.join(' ')}`);
+  let buffer = '';
+  let currentCode: string | undefined;
+  let lastAuthError: string | undefined;
+
+  const child = spawn(command, args, { cwd, env });
+
+  const handleLine = async (line: string) => {
+    if (!line) return;
+    await log?.(line);
+
+    const info = parseHytaleAuthLine(line);
+    if (info?.authError) {
+      lastAuthError = line;
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'needs_auth',
+        authenticated: false,
+        message: 'Authentication failed or expired. Retry Prepare to generate a new code.',
+        matchedLine: info.matchedLine,
+      });
+    }
+
+    if (info?.authenticated) {
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'authenticated',
+        authenticated: true,
+        matchedLine: info.matchedLine,
+        message: 'Authentication confirmed. Continuing download…',
+      });
+      return;
+    }
+
+    if (info?.deviceUrl || info?.userCode) {
+      const nextCode = info.userCode ?? currentCode;
+      const previousCode = currentCode;
+      const nextUrl = info.deviceUrl;
+      const isNewCode = Boolean(nextCode && previousCode && nextCode !== previousCode);
+      const issuedAt = info.userCode && info.userCode !== previousCode ? new Date().toISOString() : undefined;
+      currentCode = nextCode;
+
+      const message = isNewCode
+        ? `New authentication code generated. Previous code ${previousCode} is no longer valid.`
+        : 'Authentication required. Follow the URL and enter the code.';
+
+      const update = {
+        state: info.waiting ? 'waiting_for_auth' : 'needs_auth',
+        authenticated: false,
+        deviceUrl: nextUrl,
+        userCode: nextCode,
+        matchedLine: info.matchedLine,
+        message,
+      } as const;
+
+      await updateHytaleAuthStatus(instanceId, {
+        ...update,
+        ...(issuedAt ? { codeIssuedAt: issuedAt } : {}),
+        ...(info.expiresAt ? { expiresAt: info.expiresAt } : {}),
+      });
+
+      if (isNewCode) {
+        await log?.(`New authentication code generated. Previous code is no longer valid.`);
+      }
+    }
+
+    if (info?.waiting) {
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'waiting_for_auth',
+        message: 'Waiting for authentication confirmation…',
+      });
+    }
+
+    const progress = parseProgress(line);
+    if (progress !== null && /download/i.test(line)) {
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'downloading',
+        authenticated: true,
+        progress,
+        message: `Downloading game files (${progress}%)`,
+      });
+    } else if (/download/i.test(line)) {
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'downloading',
+        authenticated: true,
+        message: 'Downloading game files…',
+      });
+    }
+  };
+
+  const handleChunk = (chunk: Buffer) => {
+    buffer += chunk.toString();
+    let idx = buffer.indexOf('\n');
+    while (idx !== -1) {
+      const line = buffer.slice(0, idx).replace(/\r$/, '');
+      void handleLine(line.trimEnd());
+      buffer = buffer.slice(idx + 1);
+      idx = buffer.indexOf('\n');
+    }
+  };
+
+  child.stdout?.on('data', handleChunk);
+  child.stderr?.on('data', handleChunk);
+
+  return new Promise((resolve, reject) => {
+    child.once('exit', (code) => {
+      if (buffer.trim().length > 0) {
+        void handleLine(buffer.trim());
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const errorMessage = lastAuthError
+        ? `Downloader failed during authentication: ${lastAuthError}`
+        : `Command failed with exit code ${code}`;
+      reject(new Error(errorMessage));
+    });
+    child.once('error', (error) => reject(error));
+  });
+};
+
 export const verifyJavaMajor = async (javaBin: string, expectedMajor: number) => {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(javaBin, ['--version']);
@@ -412,6 +551,12 @@ export const installFromDownloader = async (
   options: HytaleInstallOptions,
   log?: LogFn,
 ): Promise<HytaleInstallResult> => {
+  await updateHytaleAuthStatus(instanceId, {
+    state: 'idle',
+    authenticated: false,
+    message: 'Preparing Hytale downloader…',
+    progress: undefined,
+  }, { clearAuth: true, clearMessage: false });
   const resolvedUrl = resolveDownloaderUrl({
     instance: options.downloaderUrl,
     global: options.downloaderUrlCandidates?.global,
@@ -427,6 +572,7 @@ export const installFromDownloader = async (
 
   const credentialsPath = path.join(instanceDir, HYTALE_CREDENTIALS_FILE);
   await log?.(`Using downloader credentials at ${credentialsPath}`);
+  await sanitizeCredentialsFile(credentialsPath, log);
 
   const gameZipPath = path.join(downloadsDir, 'game.zip');
   const args = ['-download-path', gameZipPath];
@@ -445,7 +591,7 @@ export const installFromDownloader = async (
   } as NodeJS.ProcessEnv;
 
   await log?.(`Starting downloader to fetch game.zip into ${gameZipPath}`);
-  await runCommand(downloader, args, instanceDir, log, downloaderEnv);
+  await runDownloaderWithStatus(instanceId, downloader, args, instanceDir, log, downloaderEnv);
 
   const zipStat = await fs.stat(gameZipPath).catch(() => null);
   if (!zipStat?.isFile()) {
@@ -453,17 +599,33 @@ export const installFromDownloader = async (
   }
 
   await log?.('Extracting game.zip into instance server directory');
+  await updateHytaleAuthStatus(instanceId, {
+    state: 'extracting',
+    authenticated: true,
+    message: 'Extracting server files…',
+    progress: undefined,
+  });
   await ensureEmptyDir(serverDir, options.overwrite ?? false);
   await extract(gameZipPath, { dir: serverDir });
 
   const jarCandidate = await findServerJar(serverDir);
   if (!jarCandidate) {
-    throw new Error('No server JAR found in extracted Hytale game.zip.');
+    const candidates = await listJarCandidates(serverDir);
+    const files = candidates.map((candidate) => candidate.name).slice(0, 10);
+    throw new Error(
+      `No server JAR found in extracted Hytale game.zip. Searched ${candidates.length} jar(s) in ${serverDir}. ` +
+        `Found: ${files.join(', ') || 'none'}`,
+    );
   }
 
   const assetsCandidate = await findAssetsZip(serverDir);
   if (!assetsCandidate) {
-    throw new Error('Assets.zip not found in extracted Hytale game.zip.');
+    const entries = await listEntries(serverDir);
+    const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name).slice(0, 10);
+    throw new Error(
+      `Assets.zip not found in extracted Hytale game.zip. Checked ${serverDir}. ` +
+        `Top-level files: ${files.join(', ') || 'none'}`,
+    );
   }
 
   await log?.(
@@ -472,6 +634,12 @@ export const installFromDownloader = async (
       assetsCandidate.path,
     )}`,
   );
+  await updateHytaleAuthStatus(instanceId, {
+    state: 'configured',
+    authenticated: true,
+    message: 'Server configured successfully.',
+    progress: 100,
+  });
 
   return {
     serverJar: path.relative(serverDir, jarCandidate.path),

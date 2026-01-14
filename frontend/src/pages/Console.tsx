@@ -1,22 +1,18 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
-import { Instance, InstanceStatus, getHytaleAuthStatus, getInstance, getInstanceStatus, sendCommand } from '../api'
+import { HytaleAuthStatus, Instance, InstanceStatus, getHytaleAuthStatus, getInstance, getInstanceStatus, sendCommand } from '../api'
 import { apiUrl } from '../config'
 
 type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 const MAX_LOGS = 2000
 
-type HytaleAuthInfo = {
-  authenticated: boolean
-  deviceUrl?: string
-  userCode?: string
-  matchedLine?: string
-}
+type HytaleAuthInfo = Pick<HytaleAuthStatus, 'authenticated' | 'deviceUrl' | 'userCode' | 'matchedLine' | 'expiresAt'>
 
 const DEVICE_URL_PATTERN = /(https?:\/\/accounts\.hytale\.com\/device)/i
 const DEVICE_CODE_PATTERN = /\b(?:code|device code|user code)\s*[:=]\s*([a-z0-9-]{4,})/i
 const AUTH_SUCCESS_PATTERN = /authentication successful/i
+const EXPIRES_IN_PATTERN = /expires in\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)/i
 
 const parseLogLine = (data: string): string => {
   try {
@@ -43,11 +39,21 @@ const extractHytaleAuthInfo = (line: string): HytaleAuthInfo | null => {
 
   const urlMatch = line.match(DEVICE_URL_PATTERN)
   const codeMatch = line.match(DEVICE_CODE_PATTERN)
+  const expiresMatch = line.match(EXPIRES_IN_PATTERN)
+  let expiresAt: string | undefined
+  if (expiresMatch?.[1]) {
+    const amount = Number.parseInt(expiresMatch[1], 10)
+    const unit = expiresMatch[2]?.toLowerCase() ?? 's'
+    const multiplier = unit.startsWith('h') ? 3_600_000 : unit.startsWith('m') ? 60_000 : 1_000
+    const next = new Date(Date.now() + amount * multiplier)
+    expiresAt = next.toISOString()
+  }
   if (urlMatch || codeMatch) {
     return {
       authenticated: false,
       deviceUrl: urlMatch?.[1],
       userCode: codeMatch?.[1]?.toUpperCase(),
+      expiresAt,
       matchedLine: line,
     }
   }
@@ -67,12 +73,13 @@ export function ConsolePage() {
   const [commandError, setCommandError] = useState<string | null>(null)
   const [instanceStatus, setInstanceStatus] = useState<InstanceStatus['status']>('unknown')
   const [instanceInfo, setInstanceInfo] = useState<Instance | null>(null)
-  const [hytaleAuth, setHytaleAuth] = useState<HytaleAuthInfo | null>(null)
+  const [hytaleAuth, setHytaleAuth] = useState<HytaleAuthStatus | null>(null)
   const [hytaleAuthError, setHytaleAuthError] = useState<string | null>(null)
   const [hytaleAuthLoading, setHytaleAuthLoading] = useState(false)
   const [commandApiMissing, setCommandApiMissing] = useState(false)
   const [history, setHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
+  const [now, setNow] = useState(Date.now())
   const logContainerRef = useRef<HTMLDivElement | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const draftCommandRef = useRef('')
@@ -136,14 +143,7 @@ export function ConsolePage() {
       setHytaleAuthError(null)
       try {
         const status = await getHytaleAuthStatus(id)
-        if (!cancelled) {
-          setHytaleAuth({
-            authenticated: status.authenticated,
-            deviceUrl: status.deviceUrl,
-            userCode: status.userCode,
-            matchedLine: status.matchedLine,
-          })
-        }
+        if (!cancelled) setHytaleAuth(status)
       } catch (error) {
         if (!cancelled) {
           const message = error instanceof Error ? error.message : 'Failed to load auth status'
@@ -184,10 +184,16 @@ export function ConsolePage() {
         const info = extractHytaleAuthInfo(line)
         if (info) {
           setHytaleAuth((prev) => ({
+            state: prev?.state ?? (info.authenticated ? 'authenticated' : 'needs_auth'),
             authenticated: info.authenticated || prev?.authenticated || false,
             deviceUrl: info.deviceUrl ?? prev?.deviceUrl,
             userCode: info.userCode ?? prev?.userCode,
             matchedLine: info.matchedLine ?? prev?.matchedLine,
+            codeIssuedAt: prev?.codeIssuedAt,
+            expiresAt: info.expiresAt ?? prev?.expiresAt,
+            message: prev?.message,
+            progress: prev?.progress,
+            updatedAt: prev?.updatedAt,
           }))
         }
       }
@@ -233,6 +239,11 @@ export function ConsolePage() {
       eventSourceRef.current = null
     }
   }, [appendLog, id, connectionAttempt])
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (!id) {
@@ -406,6 +417,43 @@ export function ConsolePage() {
     }
   }, [instanceStatus])
 
+  const authStatusLabel = useMemo(() => {
+    switch (hytaleAuth?.state) {
+      case 'needs_auth':
+        return 'Authentication required'
+      case 'waiting_for_auth':
+        return 'Waiting for authentication'
+      case 'authenticated':
+        return 'Authenticated'
+      case 'downloading':
+        return 'Downloading'
+      case 'extracting':
+        return 'Extracting'
+      case 'configured':
+        return 'Configured'
+      default:
+        return 'Idle'
+    }
+  }, [hytaleAuth?.state])
+
+  const authBadge = useMemo(() => {
+    if (!hytaleAuth) return 'badge--muted'
+    if (['needs_auth', 'waiting_for_auth'].includes(hytaleAuth.state)) return 'badge--warning'
+    if (['authenticated', 'downloading', 'extracting', 'configured'].includes(hytaleAuth.state)) return 'badge--running'
+    return 'badge--muted'
+  }, [hytaleAuth])
+
+  const expiresLabel = useMemo(() => {
+    if (!hytaleAuth?.expiresAt) return null
+    const expiresAtMs = new Date(hytaleAuth.expiresAt).getTime()
+    if (!Number.isFinite(expiresAtMs)) return null
+    const remaining = expiresAtMs - now
+    if (remaining <= 0) return 'Code expired'
+    const minutes = Math.floor(remaining / 60_000)
+    const seconds = Math.floor((remaining % 60_000) / 1000)
+    return `Code expires in ${minutes}:${seconds.toString().padStart(2, '0')}`
+  }, [hytaleAuth?.expiresAt, now])
+
   const logsHint = useMemo(() => {
     if (connectionState === 'disconnected') {
       return 'Disconnected from log stream. Try reconnecting.'
@@ -451,12 +499,7 @@ export function ConsolePage() {
           <div className="page__cluster">
             <strong>Authenticate server</strong>
             <div>
-              Status:{' '}
-              {hytaleAuth?.authenticated ? (
-                <span className="badge badge--running">Authenticated</span>
-              ) : (
-                <span className="badge badge--warning">Not authenticated</span>
-              )}
+              Status: <span className={`badge ${authBadge}`}>{authStatusLabel}</span>
             </div>
             <p className="page__hint">
               The downloader will prompt for device login during Prepare. Follow the URL/code shown in
@@ -466,6 +509,7 @@ export function ConsolePage() {
               </a>
               . Credentials are reused for subsequent prepares.
             </p>
+            {hytaleAuth?.message ? <div className="page__hint">{hytaleAuth.message}</div> : null}
             {hytaleAuthLoading ? <div className="page__hint">Loading auth status…</div> : null}
             {hytaleAuthError ? <div className="alert alert--error">{hytaleAuthError}</div> : null}
             {hytaleAuth?.userCode || hytaleAuth?.deviceUrl ? (
@@ -479,6 +523,7 @@ export function ConsolePage() {
                   </div>
                 ) : null}
                 {hytaleAuth?.userCode ? <div>Code: {hytaleAuth.userCode}</div> : null}
+                {expiresLabel ? <div>{expiresLabel}</div> : null}
               </div>
             ) : null}
             <div className="actions actions--inline">

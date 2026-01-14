@@ -164,14 +164,23 @@ Wenn nichts gesetzt ist, nutzt der Agent automatisch die Default-URL.
 ### OAuth-Flow
 
 1. Beim ersten **Prepare** startet der Downloader den OAuth-Device-Flow.
-2. Im Prepare-Log erscheint eine URL + Code (z.B. `https://accounts.hytale.com/device`).
-3. Code bestätigen → danach werden die Credentials wiederverwendet.
+2. Im Prepare-Log erscheint eine URL + Code (z.B. `https://accounts.hytale.com/device`) inklusive Ablaufhinweis.
+3. Code bestätigen → der Downloader erkennt den Erfolg automatisch und setzt den Download fort.
+4. Die Credentials werden anschließend wiederverwendet.
 
 **Credentials-Speicherort (pro Instanz):**
 
 ```
 <instance>/.hytale-downloader-credentials.json
 ```
+
+Wenn die Datei beschädigt oder unvollständig ist, wird sie beim nächsten Prepare verworfen und neu erzeugt.
+
+### Typische Fehler (Hytale)
+
+- **Code abgelaufen** → Prepare erneut starten, um einen neuen Code zu erhalten.
+- **Uhrzeit / Zeitzone** → Stelle sicher, dass die Host-Zeit korrekt ist.
+- **Credentials löschen** → `<instance>/.hytale-downloader-credentials.json` entfernen und Prepare erneut ausführen.
 
 ### Globale Settings (optional)
 

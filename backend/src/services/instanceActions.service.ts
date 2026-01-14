@@ -102,6 +102,22 @@ const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
   const jarPath = jarFileName ? path.join(serverDir, jarFileName) : null
   const assetsConfigPath = instance.hytale?.assetsPath ?? 'Assets.zip'
   const assetsPath = path.join(serverDir, assetsConfigPath)
+  const listTopLevel = async () => {
+    try {
+      const entries = await fs.readdir(serverDir, { withFileTypes: true })
+      return entries.map((entry) => entry.name)
+    } catch {
+      return []
+    }
+  }
+  const listJarNames = async () => {
+    try {
+      const entries = await fs.readdir(serverDir, { withFileTypes: true })
+      return entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.jar')).map((entry) => entry.name)
+    } catch {
+      return []
+    }
+  }
 
   try {
     if (!jarPath) {
@@ -111,12 +127,16 @@ const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
   } catch (error: any) {
     if (error.code === 'ENOENT') {
       const detectedJar = await detectHytaleServerJar(serverDir)
+      const jarCandidates = await listJarNames()
+      const topLevelEntries = await listTopLevel()
       throw new InstanceActionError(409, {
         error: jarFileName
           ? `Hytale server jar not found. Expected ${jarFileName} in ${serverDir}.`
           : 'Hytale server jar not configured. Run prepare to download game.zip.',
         expectedJar: jarFileName ?? undefined,
         detectedJar: detectedJar ?? undefined,
+        jarCandidates: jarCandidates.length ? jarCandidates : undefined,
+        topLevelEntries: topLevelEntries.length ? topLevelEntries : undefined,
         serverDir,
       })
     }
@@ -128,10 +148,12 @@ const ensureHytaleFiles = async (id: string, instance: InstanceConfig) => {
   } catch (error: any) {
     if (error.code === 'ENOENT') {
       const detectedAssets = await detectHytaleAssetsZip(serverDir)
+      const topLevelEntries = await listTopLevel()
       throw new InstanceActionError(409, {
         error: `Assets.zip not found. Expected ${assetsConfigPath} in ${serverDir}.`,
         expectedAssets: assetsPath,
         detectedAssets: detectedAssets ?? undefined,
+        topLevelEntries: topLevelEntries.length ? topLevelEntries : undefined,
         serverDir,
       })
     }

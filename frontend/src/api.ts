@@ -215,10 +215,16 @@ export type InstanceUpdatePayload = Partial<
 >
 
 export interface HytaleAuthStatus {
+  state: 'idle' | 'needs_auth' | 'waiting_for_auth' | 'authenticated' | 'downloading' | 'extracting' | 'configured'
   authenticated: boolean
   deviceUrl?: string
   userCode?: string
   matchedLine?: string
+  codeIssuedAt?: string
+  expiresAt?: string
+  message?: string
+  progress?: number
+  updatedAt?: string
 }
 
 interface CatalogVersionsResponse {

@@ -18,6 +18,7 @@ import {
   verifyJavaMajor,
 } from '../services/hytaleInstaller.service';
 import { getGlobalHytaleDownloaderUrl } from '../services/globalSettings.service';
+import { updateHytaleAuthStatus } from '../services/hytaleAuth.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -407,6 +408,16 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
         );
       } else if (mode === 'import') {
         await logPrepare(id, 'Importing existing Hytale server files');
+        await updateHytaleAuthStatus(
+          id,
+          {
+            state: 'extracting',
+            authenticated: false,
+            message: 'Importing Hytale server files…',
+            progress: undefined,
+          },
+          { clearAuth: true },
+        );
         installResult = await installFromImport(id, {
           mode,
           importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
@@ -436,6 +447,12 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
             importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
           },
         },
+      });
+      await updateHytaleAuthStatus(id, {
+        state: 'configured',
+        authenticated: true,
+        message: 'Hytale server configured successfully.',
+        progress: 100,
       });
     }
 

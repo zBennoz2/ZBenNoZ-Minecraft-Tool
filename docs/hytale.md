@@ -6,7 +6,7 @@ This document describes how to install and operate a Hytale server instance in t
 
 - Java 25 (Adoptium/Temurin 25 required).
 - UDP port **5520** open for player traffic.
-- Optional: Docker runtime via `docker/hytale/Dockerfile` for reproducible Java 25.
+- No container runtime is required for Hytale. Use a local Java 25 install.
 
 ## Default Ports
 
@@ -25,7 +25,10 @@ This document describes how to install and operate a Hytale server instance in t
    ./hytale-downloader -download-path game.zip
    ```
 
-3. The archive is unpacked so `HytaleServer.jar` and `Assets.zip` live in the instance server directory.
+3. The downloader archive contains **only** the downloader binary (no server files).
+4. The downloaded `game.zip` is unpacked into the instance server directory. The panel searches for the server
+   JAR (prefers names containing `server`, otherwise the largest JAR) and records the path alongside
+   `Assets.zip`.
 
 ### Import Existing Files
 
@@ -33,14 +36,15 @@ If you already have a Hytale server bundle:
 
 1. Provide a path to the `Server/` directory and `Assets.zip`.
 2. The panel copies the contents into the instance server directory.
-3. Validation ensures `HytaleServer.jar` and `Assets.zip` exist.
+3. Validation searches for the server JAR (name contains `server` or the largest JAR) and confirms
+   `Assets.zip` exists.
 
 ## Start Command
 
 The panel launches Hytale with:
 
 ```bash
-java -jar HytaleServer.jar --assets ./Assets.zip --bind 0.0.0.0:5520
+java -jar <server-jar> --assets <assets-path> --bind 0.0.0.0:5520
 ```
 
 Optional settings include:
@@ -52,15 +56,20 @@ Optional settings include:
 
 ## Authentication (Device Code Flow)
 
-After the first boot:
+During Prepare (Downloader CLI):
 
-1. In the Console tab, click **Console Quick Command** to send:
-   ```
-   /auth login device
-   ```
+1. The panel shows **Authentication required** and displays a URL + code (with expiration countdown).
 2. Open `https://accounts.hytale.com/device`.
-3. Enter the device code shown in the panel logs.
-4. Once the log shows **Authentication successful!**, the panel status switches to authenticated.
+3. Enter the code from the panel.
+4. The panel detects success automatically and continues the download.
+
+Credentials are stored per instance at:
+
+```
+<instance>/.hytale-downloader-credentials.json
+```
+
+They are reused on subsequent prepares.
 
 > Note: The Hytale manual states a limit of 100 servers per license.
 
@@ -87,12 +96,10 @@ Use the **Check version** and **Update** buttons in Settings. The panel runs:
 
 and re-installs server files and assets.
 
-## Docker
+## Troubleshooting
 
-The provided Dockerfile uses Temurin 25:
-
-```bash
-docker build -t hytale-server -f docker/hytale/Dockerfile .
-```
-
-At runtime, mount `/server` with your instance files and expose UDP 5520.
+- **Code expired** → Run Prepare again to generate a new code.
+- **Clock/Timezone issues** → Ensure the host clock is accurate; device flow depends on timestamps.
+- **Invalid credentials** → Delete `<instance>/.hytale-downloader-credentials.json` and retry Prepare.
+- **Server JAR not found** → Check the server directory for a `*.jar` file. The panel picks a JAR
+  containing `server` or the largest JAR available.
