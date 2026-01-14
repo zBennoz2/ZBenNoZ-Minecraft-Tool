@@ -613,16 +613,17 @@ export function Dashboard() {
         try {
           const payload = JSON.parse(event.data) as { runId?: string; event?: PrepareEvent }
           if (!payload.event) return
+          const prepareEvent = payload.event
           setPrepareRunsByInstanceId((prev) => {
             const current = prev[instance.id]
             const incomingRunId = payload.runId ?? current?.runId
             if (current?.runId && incomingRunId && current.runId !== incomingRunId) {
               return {
                 ...prev,
-                [instance.id]: { runId: incomingRunId, events: [payload.event] },
+                [instance.id]: { runId: incomingRunId, events: [prepareEvent] },
               }
             }
-            const nextEvents = [...(current?.events ?? []), payload.event]
+            const nextEvents = [...(current?.events ?? []), prepareEvent]
             const trimmed = nextEvents.length > 200 ? nextEvents.slice(-200) : nextEvents
             return {
               ...prev,
