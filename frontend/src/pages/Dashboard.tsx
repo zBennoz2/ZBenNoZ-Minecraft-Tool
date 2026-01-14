@@ -60,9 +60,12 @@ interface ActionState {
 }
 
 interface PrepareRunSnapshot {
-  runId: string | null
+  runId?: string
   events: PrepareEvent[]
 }
+
+const isPrepareEvent = (event: PrepareEvent | undefined): event is PrepareEvent =>
+  event !== undefined
 
 const formatBytes = (bytes: number | null | undefined) => {
   if (bytes === null || bytes === undefined) return '—'
@@ -579,11 +582,14 @@ export function Dashboard() {
       const handleSnapshot = (event: MessageEvent<string>) => {
         try {
           const payload = JSON.parse(event.data) as PrepareRunSnapshot
+          const events = Array.isArray(payload.events)
+            ? payload.events.filter(isPrepareEvent)
+            : []
           setPrepareRunsByInstanceId((prev) => ({
             ...prev,
             [instance.id]: {
-              runId: payload.runId ?? null,
-              events: Array.isArray(payload.events) ? payload.events : [],
+              runId: payload.runId,
+              events,
             },
           }))
         } catch (error) {
@@ -596,7 +602,7 @@ export function Dashboard() {
           const payload = JSON.parse(event.data) as { runId?: string }
           setPrepareRunsByInstanceId((prev) => ({
             ...prev,
-            [instance.id]: { runId: payload.runId ?? null, events: [] },
+            [instance.id]: { runId: payload.runId, events: [] },
           }))
         } catch (error) {
           console.error('Failed to parse prepare run', error)
@@ -609,7 +615,7 @@ export function Dashboard() {
           if (!payload.event) return
           setPrepareRunsByInstanceId((prev) => {
             const current = prev[instance.id]
-            const incomingRunId = payload.runId ?? current?.runId ?? null
+            const incomingRunId = payload.runId ?? current?.runId
             if (current?.runId && incomingRunId && current.runId !== incomingRunId) {
               return {
                 ...prev,
