@@ -196,6 +196,7 @@ export interface PrepareInstanceResult {
   requirement?: JavaRequirement
   candidates?: JavaCandidate[]
   reasons?: string[]
+  errorCode?: string
 }
 
 export type InstanceUpdatePayload = Partial<
@@ -467,7 +468,11 @@ export async function prepareInstance(
       : typeof body.error === 'string'
         ? body.error
         : `Request failed with status ${response.status}`
-  return { success: false, message: errorMessage }
+  return {
+    success: false,
+    message: errorMessage,
+    errorCode: typeof body.error === 'string' ? body.error : undefined,
+  }
 }
 
 export async function deleteInstance(id: string): Promise<void> {

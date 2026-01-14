@@ -449,6 +449,16 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     const status = error?.status ?? 500;
+    if (error?.code === 'HYTALE_DOWNLOADER_URL_MISSING') {
+      const detail = error?.diagnostics ? `Checked sources: ${error.diagnostics}` : undefined;
+      console.error(`Prepare failed for instance ${id}`, error);
+      await logPrepare(id, 'Preparation failed: Hytale downloader URL is missing or invalid.');
+      return res.status(422).json({
+        error: 'HYTALE_DOWNLOADER_URL_MISSING',
+        message: 'Hytale Downloader URL is missing or invalid. Please set it in Settings.',
+        detail,
+      });
+    }
     const message = error?.message || 'Failed to prepare instance';
     console.error(`Prepare failed for instance ${id}`, error);
     await logPrepare(id, `Preparation failed: ${message}`);

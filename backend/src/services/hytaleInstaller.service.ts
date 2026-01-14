@@ -11,6 +11,7 @@ const HYTALE_DOWNLOADER_DIR = 'hytale-downloader';
 const HYTALE_ARCH_PATTERNS = ['x64', 'amd64', 'x86_64', 'arm64', 'aarch64'];
 const HYTALE_ASSETS = 'Assets.zip';
 const HYTALE_CREDENTIALS_FILE = '.hytale-downloader-credentials.json';
+const DEFAULT_HYTALE_DOWNLOADER_URL = 'https://downloader.hytale.com/hytale-downloader.zip';
 
 type LogFn = (message: string) => Promise<void>;
 
@@ -67,15 +68,29 @@ const runCommand = async (
 
 const normalizeCandidate = (value?: string | null) => {
   if (typeof value !== 'string') {
-    return { normalized: undefined, received: value } as const;
+    return { normalized: undefined, received: value, invalid: false } as const;
   }
   const trimmed = value.trim();
-  return { normalized: trimmed.length > 0 ? trimmed : undefined, received: value } as const;
+  if (!trimmed) {
+    return { normalized: undefined, received: value, invalid: false } as const;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { normalized: undefined, received: value, invalid: true } as const;
+    }
+  } catch {
+    return { normalized: undefined, received: value, invalid: true } as const;
+  }
+  return { normalized: trimmed, received: value, invalid: false } as const;
 };
 
-const describeCandidate = (label: string, value: string | undefined, received: unknown) => {
+const describeCandidate = (label: string, value: string | undefined, received: unknown, invalid: boolean) => {
   if (value) {
     return `${label}=set`;
+  }
+  if (invalid) {
+    return `${label}=invalid`;
   }
   if (typeof received === 'string') {
     return `${label}=empty-string`;
@@ -87,19 +102,49 @@ export const resolveDownloaderUrl = (candidates: {
   instance?: string | null;
   global?: string | null;
   env?: string | null;
-}): { url?: string; diagnostics: string } => {
+}, options: { allowDefault?: boolean } = {}): {
+  url?: string;
+  diagnostics: string;
+  source?: 'instance' | 'global' | 'env' | 'default';
+  invalidSources: string[];
+} => {
   const instance = normalizeCandidate(candidates.instance);
   const global = normalizeCandidate(candidates.global);
   const env = normalizeCandidate(candidates.env ?? undefined);
 
-  const diagnostics = [
-    describeCandidate('instance', instance.normalized, instance.received),
-    describeCandidate('global', global.normalized, global.received),
-    describeCandidate('env', env.normalized, env.received),
-  ].join(', ');
+  const invalidSources = [
+    instance.invalid ? 'instance' : null,
+    global.invalid ? 'global' : null,
+    env.invalid ? 'env' : null,
+  ].filter(Boolean) as string[];
 
-  const url = instance.normalized ?? global.normalized ?? env.normalized;
-  return { url, diagnostics };
+  const diagnostics = [
+    describeCandidate('instance', instance.normalized, instance.received, instance.invalid),
+    describeCandidate('global', global.normalized, global.received, global.invalid),
+    describeCandidate('env', env.normalized, env.received, env.invalid),
+  ];
+
+  let url = instance.normalized ?? global.normalized ?? env.normalized;
+  let source: 'instance' | 'global' | 'env' | 'default' | undefined;
+  if (instance.normalized) {
+    source = 'instance';
+  } else if (global.normalized) {
+    source = 'global';
+  } else if (env.normalized) {
+    source = 'env';
+  }
+
+  if (!url && options.allowDefault !== false) {
+    url = DEFAULT_HYTALE_DOWNLOADER_URL;
+    source = 'default';
+    diagnostics.push('default=used');
+  } else if (options.allowDefault === false) {
+    diagnostics.push('default=disabled');
+  } else {
+    diagnostics.push('default=unused');
+  }
+
+  return { url, diagnostics: diagnostics.join(', '), source, invalidSources };
 };
 
 const isLikelyDownloaderName = (name: string) => {
@@ -162,10 +207,29 @@ const listTopLevelEntries = async (dir: string, limit = 10) => {
   }
 };
 
-const ensureDownloader = async (resolvedUrl: { url?: string; diagnostics: string }, log?: LogFn): Promise<string> => {
+const ensureDownloader = async (
+  resolvedUrl: {
+    url?: string;
+    diagnostics: string;
+    source?: 'instance' | 'global' | 'env' | 'default';
+    invalidSources: string[];
+  },
+  log?: LogFn,
+): Promise<string> => {
   const url = resolvedUrl.url;
   if (!url) {
-    throw new Error(`Missing downloader URL. Checked sources: ${resolvedUrl.diagnostics}.`);
+    const error = new Error('Hytale downloader URL is missing or invalid.');
+    (error as Error & { code?: string; diagnostics?: string; invalidSources?: string[] }).code =
+      'HYTALE_DOWNLOADER_URL_MISSING';
+    (error as Error & { code?: string; diagnostics?: string; invalidSources?: string[] }).diagnostics =
+      resolvedUrl.diagnostics;
+    (error as Error & { code?: string; diagnostics?: string; invalidSources?: string[] }).invalidSources =
+      resolvedUrl.invalidSources;
+    throw error;
+  }
+
+  if (resolvedUrl.source === 'default') {
+    await log?.('Using default Hytale downloader URL. Configure Settings or HYTALE_DOWNLOADER_URL to override.');
   }
 
   const downloaderRoot = path.join(getInstallerCacheDir(), 'hytale');

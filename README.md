@@ -155,6 +155,9 @@ Der Hytale-Downloader wird per URL geladen. Die Priorität ist:
 1. **Instanz-Setting** (Settings → Downloader URL)
 2. **Globale Settings**
 3. **ENV** `HYTALE_DOWNLOADER_URL`
+4. **Default** `https://downloader.hytale.com/hytale-downloader.zip`
+
+Wenn nichts gesetzt ist, nutzt der Agent automatisch die Default-URL.
 
 > Hinweis: Die offizielle `hytale-downloader.zip` enthält **keinen Server-JAR**. Sie enthält nur die Downloader-Binaries und eine QUICKSTART-Datei. Der eigentliche Server kommt erst über den Downloader.
 

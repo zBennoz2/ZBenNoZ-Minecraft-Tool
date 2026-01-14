@@ -166,6 +166,9 @@ export function Dashboard() {
   const [prepareMessageByInstanceId, setPrepareMessageByInstanceId] = useState<
     Record<string, string | undefined>
   >({})
+  const [prepareErrorCodeByInstanceId, setPrepareErrorCodeByInstanceId] = useState<
+    Record<string, string | undefined>
+  >({})
   const [prepareJavaIssueByInstanceId, setPrepareJavaIssueByInstanceId] = useState<
     Record<string, JavaRequirementIssue | undefined>
   >({})
@@ -313,9 +316,11 @@ export function Dashboard() {
     instanceId: string,
     state: PrepareState,
     message?: string,
+    errorCode?: string,
   ) => {
     setPrepareStateByInstanceId((prev) => ({ ...prev, [instanceId]: state }))
     setPrepareMessageByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+    setPrepareErrorCodeByInstanceId((prev) => ({ ...prev, [instanceId]: errorCode }))
   }
 
   const triggerPrepare = async (instance: Instance) => {
@@ -337,13 +342,14 @@ export function Dashboard() {
     const result = await prepareInstance(instance.id, prepareOptions)
 
     if (result.success) {
-      updatePrepareState(instance.id, 'prepared', result.message)
+      updatePrepareState(instance.id, 'prepared', result.message, undefined)
       setPrepareJavaIssueByInstanceId((prev) => ({ ...prev, [instance.id]: undefined }))
     } else if (result.status === 'needs_java') {
       updatePrepareState(
         instance.id,
         'error',
         result.message ?? 'Java runtime required to prepare this instance.',
+        undefined,
       )
       setPrepareJavaIssueByInstanceId((prev) => ({
         ...prev,
@@ -354,7 +360,7 @@ export function Dashboard() {
         },
       }))
     } else {
-      updatePrepareState(instance.id, 'error', result.message ?? 'Prepare failed')
+      updatePrepareState(instance.id, 'error', result.message ?? 'Prepare failed', result.errorCode)
     }
 
     await refreshInstanceStatus(instance.id)
@@ -492,7 +498,7 @@ export function Dashboard() {
         type === 'start' &&
         /jar not found|server jar|missing server jar/i.test(message)
       ) {
-        updatePrepareState(id, 'not_prepared', message)
+        updatePrepareState(id, 'not_prepared', message, undefined)
       }
     } finally {
       await refreshInstanceStatus(id)
@@ -742,6 +748,8 @@ export function Dashboard() {
           const isSelected = selectedInstanceId === instance.id
           const prepareState = prepareStateByInstanceId[instance.id] ?? 'prepared'
           const prepareMessage = prepareMessageByInstanceId[instance.id]
+          const prepareErrorCode = prepareErrorCodeByInstanceId[instance.id]
+          const hasDownloaderUrlError = prepareErrorCode === 'HYTALE_DOWNLOADER_URL_MISSING'
           const startDisabled =
             isBusy || displayStatus === 'running' || prepareState !== 'prepared'
           const prepareDisabled = isBusy || prepareState === 'preparing'
@@ -900,6 +908,12 @@ export function Dashboard() {
               {prepareState === 'error' || prepareState === 'not_prepared' ? (
                 <div className="alert alert--error">
                   {prepareMessage ?? 'Server files are not prepared.'}
+                  {hasDownloaderUrlError ? (
+                    <div className="page__hint" style={{ marginTop: 8 }}>
+                      Set the Hytale Downloader URL in{' '}
+                      <Link to={`/instances/${instance.id}/settings`}>Settings</Link> and retry prepare.
+                    </div>
+                  ) : null}
                   {prepareJavaIssueByInstanceId[instance.id] ? (
                     <div style={{ marginTop: 8 }}>
                       <div>
