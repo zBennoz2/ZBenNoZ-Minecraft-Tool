@@ -227,6 +227,26 @@ export interface HytaleAuthStatus {
   updatedAt?: string
 }
 
+export type PreparePhase =
+  | 'needs_auth'
+  | 'waiting_for_auth'
+  | 'authenticated'
+  | 'downloading'
+  | 'extracting'
+  | 'configured'
+  | 'error'
+
+export type PrepareLevel = 'info' | 'warning' | 'error'
+
+export interface PrepareEvent {
+  ts: string
+  level: PrepareLevel
+  phase: PreparePhase
+  message: string
+  data?: Record<string, unknown>
+  runId: string
+}
+
 interface CatalogVersionsResponse {
   versions: string[]
   loaderVersionsByMinecraft?: Record<string, string[]>

@@ -161,7 +161,20 @@ Wenn nichts gesetzt ist, nutzt der Agent automatisch die Default-URL.
 
 > Hinweis: Die offizielle `hytale-downloader.zip` enthält **keinen Server-JAR**. Sie enthält nur die Downloader-Binaries und eine QUICKSTART-Datei. Der eigentliche Server kommt erst über den Downloader.
 
-### OAuth-Flow
+### Prepare-Logs vs. Server-Console
+
+- **Prepare-Logs** sind ein eigener Stream für den Download-/Installations-Workflow und laufen **auch dann, wenn der Server nicht startet**.
+- **Server-Console** zeigt nur die laufende Serverausgabe.
+- Der OAuth-Code erscheint sofort im **Hytale-Prepare-Panel** (nicht mehr nur in der Console).
+
+### Hytale Prepare Ablauf
+
+1. **Prepare** klicken → der Device-Flow startet.
+2. UI zeigt **Verification URL + Code** sofort inkl. Ablauf-Countdown.
+3. Code bestätigen → Download & Extract laufen automatisch.
+4. Sobald der JAR/Assets-Pfad gespeichert ist, ist der Server **Configured** und kann gestartet werden.
+
+### OAuth-Flow (Device Flow)
 
 1. Beim ersten **Prepare** startet der Downloader den OAuth-Device-Flow.
 2. Im Prepare-Log erscheint eine URL + Code (z.B. `https://accounts.hytale.com/device`) inklusive Ablaufhinweis.
@@ -178,7 +191,7 @@ Wenn die Datei beschädigt oder unvollständig ist, wird sie beim nächsten Prep
 
 ### Typische Fehler (Hytale)
 
-- **Code abgelaufen** → Prepare erneut starten, um einen neuen Code zu erhalten.
+- **Code abgelaufen** → sofort **Retry Prepare** klicken, um einen neuen Code zu erhalten.
 - **Uhrzeit / Zeitzone** → Stelle sicher, dass die Host-Zeit korrekt ist.
 - **Credentials löschen** → `<instance>/.hytale-downloader-credentials.json` entfernen und Prepare erneut ausführen.
 

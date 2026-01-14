@@ -7,7 +7,7 @@ import { CatalogService } from '../core/CatalogService';
 import { DownloadService } from '../core/DownloadService';
 import { InstanceManager } from '../core/InstanceManager';
 import { LogService } from '../core/LogService';
-import { logStreamService } from '../services/logStream.service';
+import { PreparePhase, prepareEventService } from '../services/prepareEvent.service';
 import { LoaderType, ServerType } from '../core/types';
 import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
 import { InstanceActionError } from '../core/InstanceActionError';
@@ -37,11 +37,20 @@ type PrepareError = { status: number; message: string; detail?: string };
 
 const ensureDir = async (dirPath: string) => fs.mkdir(dirPath, { recursive: true });
 
-const logPrepare = async (instanceId: string, message: string) => {
+const logPrepare = async (
+  instanceId: string,
+  message: string,
+  options?: { phase?: PreparePhase; level?: 'info' | 'warning' | 'error'; data?: Record<string, unknown> },
+) => {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   await logService.appendLog(instanceId, line, 'prepare');
-  await logService.appendLog(instanceId, line, 'server');
-  logStreamService.emitLog(instanceId, line);
+  prepareEventService.emitEvent(instanceId, {
+    ts: new Date().toISOString(),
+    level: options?.level ?? 'info',
+    phase: options?.phase ?? 'downloading',
+    message,
+    data: options?.data,
+  });
 };
 
 const runCommand = async (
@@ -304,6 +313,7 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
   if (!instance) {
     return res.status(404).json({ error: 'Instance not found' });
   }
+  let runId: string | null = null;
 
   let javaBin: string | null = null;
   try {
@@ -357,12 +367,14 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Failed to resolve Java runtime' });
   }
 
+  runId = prepareEventService.startRun(id);
+
   try {
     if ((serverType === 'vanilla' || serverType === 'paper' || serverType === 'forge' || serverType === 'fabric') && (!minecraftVersion || !minecraftVersion.trim())) {
       throw { status: 400, message: 'minecraftVersion is required for this serverType' } as PrepareError;
     }
 
-    await logPrepare(id, `Preparing instance ${id} (${serverType})`);
+    await logPrepare(id, `Preparing instance ${id} (${serverType})`, { phase: 'downloading' });
 
     if (serverType === 'vanilla' || serverType === 'paper') {
       await prepareVanillaOrPaper(id, serverType, minecraftVersion!, overwrite);
@@ -386,7 +398,7 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       const mode = hytaleInstallMode ?? instance.hytale?.install?.mode ?? 'downloader';
       let installResult;
       if (mode === 'downloader') {
-        await logPrepare(id, 'Installing Hytale server via Downloader CLI');
+        await logPrepare(id, 'Installing Hytale server via Downloader CLI', { phase: 'downloading' });
         const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
         const instanceDownloaderUrl = normalizeOptionalString(
           hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
@@ -407,7 +419,7 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
           (message) => logPrepare(id, message),
         );
       } else if (mode === 'import') {
-        await logPrepare(id, 'Importing existing Hytale server files');
+        await logPrepare(id, 'Importing existing Hytale server files', { phase: 'extracting' });
         await updateHytaleAuthStatus(
           id,
           {
@@ -454,11 +466,22 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
         message: 'Hytale server configured successfully.',
         progress: 100,
       });
+      prepareEventService.emitEvent(id, {
+        ts: new Date().toISOString(),
+        level: 'info',
+        phase: 'configured',
+        message: 'Hytale server configured successfully.',
+        data: {
+          serverJar: installResult?.serverJar,
+          assetsPath: installResult?.assetsPath,
+        },
+      });
     }
 
     const updated = await instanceManager.getInstance(id);
     return res.json({
       id,
+      runId: runId ?? undefined,
       serverType,
       minecraftVersion: minecraftVersion ?? updated?.minecraftVersion,
       loaderVersion: updated?.loader?.version ?? loaderVersion ?? forgeVersion ?? neoforgeVersion,
@@ -469,7 +492,7 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     if (error?.code === 'HYTALE_DOWNLOADER_URL_MISSING') {
       const detail = error?.diagnostics ? `Checked sources: ${error.diagnostics}` : undefined;
       console.error(`Prepare failed for instance ${id}`, error);
-      await logPrepare(id, 'Preparation failed: Hytale downloader URL is missing or invalid.');
+      await logPrepare(id, 'Preparation failed: Hytale downloader URL is missing or invalid.', { phase: 'error', level: 'error' });
       return res.status(422).json({
         error: 'HYTALE_DOWNLOADER_URL_MISSING',
         message: 'Hytale Downloader URL is missing or invalid. Please set it in Settings.',
@@ -478,8 +501,30 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     }
     const message = error?.message || 'Failed to prepare instance';
     console.error(`Prepare failed for instance ${id}`, error);
-    await logPrepare(id, `Preparation failed: ${message}`);
+    await logPrepare(id, `Preparation failed: ${message}`, {
+      phase: 'error',
+      level: 'error',
+      data: { detail: error?.detail },
+    });
     return res.status(status).json({ error: message, detail: error?.detail });
+  }
+});
+
+router.get('/:id/prepare/stream', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const instance = await instanceManager.getInstance(id);
+    if (!instance) {
+      return res.status(404).json({ error: 'Instance not found' });
+    }
+
+    prepareEventService.subscribe(id, res);
+  } catch (error) {
+    console.error(`Error streaming prepare events for instance ${id}`, error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to stream prepare events' });
+    }
+    res.end();
   }
 });
 

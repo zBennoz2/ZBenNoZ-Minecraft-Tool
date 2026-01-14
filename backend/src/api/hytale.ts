@@ -1,8 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { InstanceManager } from '../core/InstanceManager';
 import { LogService } from '../core/LogService';
-import { logStreamService } from '../services/logStream.service';
-import { getHytaleAuthStatus } from '../services/hytaleAuth.service';
+import { getHytaleAuthStatus, updateHytaleAuthStatus } from '../services/hytaleAuth.service';
 import {
   checkDownloaderVersion,
   installFromDownloader,
@@ -18,8 +17,6 @@ const logService = new LogService();
 const logPanel = async (instanceId: string, message: string) => {
   const line = `[${new Date().toISOString()}] ${message}\n`;
   await logService.appendLog(instanceId, line, 'prepare');
-  await logService.appendLog(instanceId, line, 'server');
-  logStreamService.emitLog(instanceId, line);
 };
 
 const ensureHytaleInstance = async (id: string, res: Response) => {
@@ -122,6 +119,12 @@ router.post('/:id/hytale/update', async (req: Request, res: Response) => {
         ...(instance.hytale ?? {}),
         assetsPath: installResult.assetsPath,
       },
+    });
+    await updateHytaleAuthStatus(instance.id, {
+      state: 'configured',
+      authenticated: true,
+      message: 'Hytale server updated successfully.',
+      progress: 100,
     });
     await logPanel(instance.id, 'Hytale update finished');
     res.json({ ok: true });

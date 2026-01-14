@@ -5,6 +5,7 @@ import extract from 'extract-zip';
 import { getInstallerCacheDir, getInstanceDir, getInstanceServerDir } from '../config/paths';
 import { DownloadService } from '../core/DownloadService';
 import { parseHytaleAuthLine, updateHytaleAuthStatus } from './hytaleAuth.service';
+import { PreparePhase, prepareEventService } from './prepareEvent.service';
 
 const HYTALE_DOWNLOADER_ENV = 'HYTALE_DOWNLOADER_URL';
 const HYTALE_DOWNLOADER_ARCHIVE = 'hytale-downloader.zip';
@@ -410,6 +411,16 @@ const runDownloaderWithStatus = async (
 
   const child = spawn(command, args, { cwd, env });
 
+  const emitPrepareEvent = (phase: PreparePhase, message: string, data?: Record<string, unknown>) => {
+    prepareEventService.emitEvent(instanceId, {
+      ts: new Date().toISOString(),
+      level: phase === 'error' ? 'error' : 'info',
+      phase,
+      message,
+      data,
+    });
+  };
+
   const handleLine = async (line: string) => {
     if (!line) return;
     await log?.(line);
@@ -423,6 +434,9 @@ const runDownloaderWithStatus = async (
         message: 'Authentication failed or expired. Retry Prepare to generate a new code.',
         matchedLine: info.matchedLine,
       });
+      emitPrepareEvent('error', 'Authentication failed or expired. Retry Prepare to generate a new code.', {
+        matchedLine: info.matchedLine,
+      });
     }
 
     if (info?.authenticated) {
@@ -432,6 +446,7 @@ const runDownloaderWithStatus = async (
         matchedLine: info.matchedLine,
         message: 'Authentication confirmed. Continuing download…',
       });
+      emitPrepareEvent('authenticated', 'Authentication confirmed. Continuing download…');
       return;
     }
 
@@ -465,6 +480,14 @@ const runDownloaderWithStatus = async (
       if (isNewCode) {
         await log?.(`New authentication code generated. Previous code is no longer valid.`);
       }
+
+      emitPrepareEvent(info.waiting ? 'waiting_for_auth' : 'needs_auth', message, {
+        deviceUrl: nextUrl,
+        userCode: nextCode,
+        previousUserCode: isNewCode ? previousCode : undefined,
+        expiresAt: info.expiresAt,
+        codeIssuedAt: issuedAt,
+      });
     }
 
     if (info?.waiting) {
@@ -472,6 +495,7 @@ const runDownloaderWithStatus = async (
         state: 'waiting_for_auth',
         message: 'Waiting for authentication confirmation…',
       });
+      emitPrepareEvent('waiting_for_auth', 'Waiting for authentication confirmation…');
     }
 
     const progress = parseProgress(line);
@@ -482,12 +506,14 @@ const runDownloaderWithStatus = async (
         progress,
         message: `Downloading game files (${progress}%)`,
       });
+      emitPrepareEvent('downloading', `Downloading game files (${progress}%)`, { progress });
     } else if (/download/i.test(line)) {
       await updateHytaleAuthStatus(instanceId, {
         state: 'downloading',
         authenticated: true,
         message: 'Downloading game files…',
       });
+      emitPrepareEvent('downloading', 'Downloading game files…');
     }
   };
 
@@ -557,6 +583,12 @@ export const installFromDownloader = async (
     message: 'Preparing Hytale downloader…',
     progress: undefined,
   }, { clearAuth: true, clearMessage: false });
+  prepareEventService.emitEvent(instanceId, {
+    ts: new Date().toISOString(),
+    level: 'info',
+    phase: 'downloading',
+    message: 'Preparing Hytale downloader…',
+  });
   const resolvedUrl = resolveDownloaderUrl({
     instance: options.downloaderUrl,
     global: options.downloaderUrlCandidates?.global,
@@ -591,6 +623,13 @@ export const installFromDownloader = async (
   } as NodeJS.ProcessEnv;
 
   await log?.(`Starting downloader to fetch game.zip into ${gameZipPath}`);
+  prepareEventService.emitEvent(instanceId, {
+    ts: new Date().toISOString(),
+    level: 'info',
+    phase: 'downloading',
+    message: 'Starting downloader to fetch game.zip…',
+    data: { downloadPath: gameZipPath },
+  });
   await runDownloaderWithStatus(instanceId, downloader, args, instanceDir, log, downloaderEnv);
 
   const zipStat = await fs.stat(gameZipPath).catch(() => null);
@@ -604,6 +643,12 @@ export const installFromDownloader = async (
     authenticated: true,
     message: 'Extracting server files…',
     progress: undefined,
+  });
+  prepareEventService.emitEvent(instanceId, {
+    ts: new Date().toISOString(),
+    level: 'info',
+    phase: 'extracting',
+    message: 'Extracting server files…',
   });
   await ensureEmptyDir(serverDir, options.overwrite ?? false);
   await extract(gameZipPath, { dir: serverDir });
@@ -634,13 +679,6 @@ export const installFromDownloader = async (
       assetsCandidate.path,
     )}`,
   );
-  await updateHytaleAuthStatus(instanceId, {
-    state: 'configured',
-    authenticated: true,
-    message: 'Server configured successfully.',
-    progress: 100,
-  });
-
   return {
     serverJar: path.relative(serverDir, jarCandidate.path),
     assetsPath: path.relative(serverDir, assetsCandidate.path),

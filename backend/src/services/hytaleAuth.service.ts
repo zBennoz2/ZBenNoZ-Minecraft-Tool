@@ -162,7 +162,7 @@ export const updateHytaleAuthStatus = async (
 export const getHytaleAuthStatus = async (instanceId: string): Promise<HytaleAuthStatus> => {
   const stored = await readAuthStatusFile(instanceId);
   const logService = new LogService();
-  const tail = await logService.readTail(instanceId, 400);
+  const tail = await logService.readTail(instanceId, 400, 'prepare');
   const fallback: HytaleAuthStatus = stored ?? { state: 'idle', authenticated: false };
   if (!tail) {
     return fallback;

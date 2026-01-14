@@ -10,6 +10,7 @@ import {
   JavaCandidate,
   JavaRequirement,
   LoaderType,
+  PrepareEvent,
   PrepareInstanceOptions,
   ServerType,
   createInstance,
@@ -23,6 +24,7 @@ import {
   stopInstance,
   streamJavaInstall,
 } from '../api'
+import { apiUrl } from '../config'
 import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 
 type PrepareState = 'not_prepared' | 'preparing' | 'prepared' | 'error'
@@ -57,6 +59,11 @@ interface ActionState {
   type: 'start' | 'stop'
 }
 
+interface PrepareRunSnapshot {
+  runId: string | null
+  events: PrepareEvent[]
+}
+
 const formatBytes = (bytes: number | null | undefined) => {
   if (bytes === null || bytes === undefined) return '—'
   if (bytes < 1024) return `${bytes.toFixed(0)} B`
@@ -84,6 +91,37 @@ const formatDuration = (ms: number | null | undefined) => {
 const clampPercent = (value: number | null | undefined) => {
   if (value === null || value === undefined || Number.isNaN(value)) return 0
   return Math.min(100, Math.max(0, value))
+}
+
+const formatPreparePhase = (phase?: PrepareEvent['phase']) => {
+  switch (phase) {
+    case 'needs_auth':
+      return 'Authentication required'
+    case 'waiting_for_auth':
+      return 'Waiting for authentication'
+    case 'authenticated':
+      return 'Authenticated'
+    case 'downloading':
+      return 'Downloading'
+    case 'extracting':
+      return 'Extracting'
+    case 'configured':
+      return 'Configured'
+    case 'error':
+      return 'Error'
+    default:
+      return 'Idle'
+  }
+}
+
+const badgeForPhase = (phase?: PrepareEvent['phase']) => {
+  if (!phase) return 'badge--muted'
+  if (phase === 'error') return 'badge--error'
+  if (phase === 'needs_auth' || phase === 'waiting_for_auth') return 'badge--warning'
+  if (phase === 'authenticated' || phase === 'downloading' || phase === 'extracting' || phase === 'configured') {
+    return 'badge--running'
+  }
+  return 'badge--muted'
 }
 
 const MiniSparkline = ({ values, title }: { values?: number[]; title: string }) => {
@@ -172,6 +210,11 @@ export function Dashboard() {
   const [prepareJavaIssueByInstanceId, setPrepareJavaIssueByInstanceId] = useState<
     Record<string, JavaRequirementIssue | undefined>
   >({})
+  const [prepareRunsByInstanceId, setPrepareRunsByInstanceId] = useState<
+    Record<string, PrepareRunSnapshot>
+  >({})
+  const prepareEventSourcesRef = useRef<Record<string, EventSource>>({})
+  const [now, setNow] = useState(Date.now())
   const [javaInstallByInstanceId, setJavaInstallByInstanceId] = useState<
     Record<string, JavaInstallState | undefined>
   >({})
@@ -514,8 +557,99 @@ export function Dashboard() {
     return () => {
       Object.values(metricsControllersRef.current).forEach((controller) => controller.abort())
       Object.values(javaInstallStreamRef.current).forEach((source) => source.close())
+      Object.values(prepareEventSourcesRef.current).forEach((source) => source.close())
     }
   }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const sources = prepareEventSourcesRef.current
+    const hytaleInstances = instances.filter((instance) => instance.serverType === 'hytale')
+    const activeIds = new Set(hytaleInstances.map((instance) => instance.id))
+
+    hytaleInstances.forEach((instance) => {
+      if (sources[instance.id]) return
+      const source = new EventSource(apiUrl(`/api/instances/${instance.id}/prepare/stream`))
+      sources[instance.id] = source
+
+      const handleSnapshot = (event: MessageEvent<string>) => {
+        try {
+          const payload = JSON.parse(event.data) as PrepareRunSnapshot
+          setPrepareRunsByInstanceId((prev) => ({
+            ...prev,
+            [instance.id]: {
+              runId: payload.runId ?? null,
+              events: Array.isArray(payload.events) ? payload.events : [],
+            },
+          }))
+        } catch (error) {
+          console.error('Failed to parse prepare snapshot', error)
+        }
+      }
+
+      const handleRun = (event: MessageEvent<string>) => {
+        try {
+          const payload = JSON.parse(event.data) as { runId?: string }
+          setPrepareRunsByInstanceId((prev) => ({
+            ...prev,
+            [instance.id]: { runId: payload.runId ?? null, events: [] },
+          }))
+        } catch (error) {
+          console.error('Failed to parse prepare run', error)
+        }
+      }
+
+      const handlePrepare = (event: MessageEvent<string>) => {
+        try {
+          const payload = JSON.parse(event.data) as { runId?: string; event?: PrepareEvent }
+          if (!payload.event) return
+          setPrepareRunsByInstanceId((prev) => {
+            const current = prev[instance.id]
+            const incomingRunId = payload.runId ?? current?.runId ?? null
+            if (current?.runId && incomingRunId && current.runId !== incomingRunId) {
+              return {
+                ...prev,
+                [instance.id]: { runId: incomingRunId, events: [payload.event] },
+              }
+            }
+            const nextEvents = [...(current?.events ?? []), payload.event]
+            const trimmed = nextEvents.length > 200 ? nextEvents.slice(-200) : nextEvents
+            return {
+              ...prev,
+              [instance.id]: { runId: incomingRunId, events: trimmed },
+            }
+          })
+        } catch (error) {
+          console.error('Failed to parse prepare event', error)
+        }
+      }
+
+      source.addEventListener('snapshot', handleSnapshot as EventListener)
+      source.addEventListener('run', handleRun as EventListener)
+      source.addEventListener('prepare', handlePrepare as EventListener)
+      source.onerror = () => {
+        source.close()
+        delete sources[instance.id]
+      }
+    })
+
+    Object.keys(sources).forEach((id) => {
+      if (!activeIds.has(id)) {
+        sources[id].close()
+        delete sources[id]
+        setPrepareRunsByInstanceId((prev) => {
+          if (!prev[id]) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      }
+    })
+  }, [instances])
 
   useEffect(() => {
     if (!createServerType || !usesCatalog) {
@@ -750,6 +884,35 @@ export function Dashboard() {
           const prepareMessage = prepareMessageByInstanceId[instance.id]
           const prepareErrorCode = prepareErrorCodeByInstanceId[instance.id]
           const hasDownloaderUrlError = prepareErrorCode === 'HYTALE_DOWNLOADER_URL_MISSING'
+          const prepareRun = prepareRunsByInstanceId[instance.id]
+          const prepareEvents = prepareRun?.events ?? []
+          const latestPrepareEvent = prepareEvents[prepareEvents.length - 1]
+          const latestAuthEvent = [...prepareEvents].reverse().find((event) => {
+            const data = event.data as { userCode?: unknown; deviceUrl?: unknown } | undefined
+            return typeof data?.userCode === 'string' || typeof data?.deviceUrl === 'string'
+          })
+          const authData = (latestAuthEvent?.data ?? {}) as {
+            userCode?: string
+            deviceUrl?: string
+            expiresAt?: string
+            previousUserCode?: string
+            codeIssuedAt?: string
+          }
+          const progressEvent = [...prepareEvents].reverse().find((event) => {
+            const data = event.data as { progress?: unknown } | undefined
+            return typeof data?.progress === 'number'
+          })
+          const progress = (progressEvent?.data as { progress?: number } | undefined)?.progress
+          const expiresLabel = (() => {
+            if (!authData.expiresAt) return null
+            const expiresAtMs = new Date(authData.expiresAt).getTime()
+            if (!Number.isFinite(expiresAtMs)) return null
+            const remaining = expiresAtMs - now
+            if (remaining <= 0) return 'Code expired'
+            const minutes = Math.floor(remaining / 60_000)
+            const seconds = Math.floor((remaining % 60_000) / 1000)
+            return `Code expires in ${minutes}:${seconds.toString().padStart(2, '0')}`
+          })()
           const startDisabled =
             isBusy || displayStatus === 'running' || prepareState !== 'prepared'
           const prepareDisabled = isBusy || prepareState === 'preparing'
@@ -979,6 +1142,97 @@ export function Dashboard() {
                     >
                       Retry Prepare
                     </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {instance.serverType === 'hytale' ? (
+                <div className="prepare-panel">
+                  <div className="prepare-panel__header">
+                    <div>
+                      <strong>Hytale Prepare</strong>
+                      <div className="page__hint">
+                        {prepareRun?.runId ? `Run ID: ${prepareRun.runId}` : 'No prepare run yet.'}
+                      </div>
+                    </div>
+                    <span className={`badge ${badgeForPhase(latestPrepareEvent?.phase)}`}>
+                      {formatPreparePhase(latestPrepareEvent?.phase)}
+                    </span>
+                  </div>
+
+                  {authData.deviceUrl || authData.userCode ? (
+                    <div className="prepare-panel__auth">
+                      <div>
+                        <div className="prepare-panel__label">Verification URL</div>
+                        {authData.deviceUrl ? (
+                          <a href={authData.deviceUrl} target="_blank" rel="noreferrer">
+                            {authData.deviceUrl}
+                          </a>
+                        ) : (
+                          <span className="page__hint">Waiting for URL…</span>
+                        )}
+                      </div>
+                      <div>
+                        <div className="prepare-panel__label">User Code</div>
+                        <div className="prepare-panel__code">{authData.userCode ?? '—'}</div>
+                        {expiresLabel ? <div className="page__hint">{expiresLabel}</div> : null}
+                        {authData.previousUserCode ? (
+                          <div className="page__hint">
+                            New code generated. Previous code {authData.previousUserCode} is no longer valid.
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="actions actions--inline">
+                        <button
+                          className="btn btn--secondary"
+                          type="button"
+                          onClick={() => {
+                            if (authData.userCode) {
+                              void navigator.clipboard?.writeText(authData.userCode)
+                            }
+                          }}
+                          disabled={!authData.userCode}
+                        >
+                          Copy Code
+                        </button>
+                        <button
+                          className="btn btn--secondary"
+                          type="button"
+                          onClick={() => {
+                            if (authData.deviceUrl) {
+                              window.open(authData.deviceUrl, '_blank', 'noreferrer')
+                            }
+                          }}
+                          disabled={!authData.deviceUrl}
+                        >
+                          Open URL
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="page__hint">
+                      Click Prepare to generate a device code. Confirm it immediately to avoid expiration.
+                    </div>
+                  )}
+
+                  {typeof progress === 'number' ? (
+                    <div className="page__hint">Download progress: {progress}%</div>
+                  ) : null}
+
+                  <div className="prepare-panel__events">
+                    {prepareEvents.length === 0 ? (
+                      <div className="page__hint">No prepare events yet.</div>
+                    ) : (
+                      prepareEvents.slice(-6).map((event, index) => (
+                        <div key={`${event.ts}-${index}`} className="prepare-panel__event">
+                          <span className="prepare-panel__time">
+                            {new Date(event.ts).toLocaleTimeString()}
+                          </span>
+                          <span className={`badge ${badgeForPhase(event.phase)}`}>{event.phase}</span>
+                          <span>{event.message}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               ) : null}
