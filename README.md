@@ -61,7 +61,7 @@ java -version
 
 ---
 
-### Ubuntu Server / Desktop
+### Ubuntu Server / Desktop (Linux Install Guide)
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -90,6 +90,8 @@ git --version
 java -version
 ```
 
+> Hinweis für Hytale: Für Hytale-Server wird **Java 25** benötigt. Installiere zusätzlich eine passende Java-Version (z.B. Temurin 25) oder setze den Java-Pfad in den Instanz-Settings.
+
 ---
 
 ## Download
@@ -104,8 +106,6 @@ cd ZBenNoZ-Minecraft-Tool
 ---
 
 ## Installation (einmalig)
-
-### Abhängigkeiten installieren
 
 ```bash
 npm install
@@ -125,9 +125,7 @@ npm --prefix frontend install
 
 ---
 
-## Start der Anwendung (Windows / macOS / Ubuntu)
-
-### Agent im Web-Modus starten
+## Start der Anwendung (Agent – Web)
 
 ```bash
 npm run agent:web
@@ -135,27 +133,108 @@ npm run agent:web
 
 Der Agent startet standardmäßig auf **Port 3001**.
 
-### Weboberfläche öffnen
-
-Im Browser aufrufen:
+Weboberfläche im Browser öffnen:
 
 ```
 http://SERVER_IP:3001
 ```
 
-Beispiele:
-- Lokal: `http://127.0.0.1:3001`
-- Server im LAN: `http://192.168.x.x:3001`
-- Öffentlicher Server: `http://DEINE_DOMAIN:3001`
+---
+
+## Hytale Downloader (optional)
+
+Der Hytale-Downloader wird per URL geladen. Die Priorität ist:
+
+1. **Instanz-Setting** (Settings → Downloader URL)
+2. **Globale Settings**
+3. **ENV** `HYTALE_DOWNLOADER_URL`
+
+> Für Download/Entpacken werden keine zusätzlichen System-Tools (wie `unzip` oder `wget`) benötigt, da dies direkt in Node.js erledigt wird.
+
+### Globale Settings (optional)
+
+Lege eine Datei unter `data/settings.json` an:
+
+```json
+{
+  "hytale": {
+    "downloaderUrl": "https://downloader.hytale.com/hytale-downloader.zip"
+  }
+}
+```
+
+### ENV-Variable (optional)
+
+```bash
+export HYTALE_DOWNLOADER_URL="https://downloader.hytale.com/hytale-downloader.zip"
+```
 
 ---
 
-## Firewall / Netzwerk
+## Autostart unter Linux (systemd – empfohlen)
 
-### Windows
-- Stelle sicher, dass **Port 3001** in der Firewall freigegeben ist, falls extern zugegriffen wird.
+### systemd Service anlegen
+
+```bash
+sudo nano /etc/systemd/system/ZBenNoZ-Minecraft-Tool.service
+```
+
+Inhalt:
+
+```ini
+[Unit]
+Description=ZBenNoZ-Minecraft-Tool
+After=network.target
+
+[Service]
+Type=simple
+User=lager
+WorkingDirectory=/home/user/ZBenNoZ-Minecraft-Tool
+ExecStart=/usr/bin/npm run agent:web
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> ⚠️ Passe **User** und **WorkingDirectory** an dein System an.
+
+---
+
+### Service aktivieren & starten
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable ZBenNoZ-Minecraft-Tool
+sudo systemctl start ZBenNoZ-Minecraft-Tool
+```
+
+Status prüfen:
+
+```bash
+sudo systemctl status ZBenNoZ-Minecraft-Tool
+```
+
+Logs anzeigen:
+
+```bash
+journalctl -u ZBenNoZ-Minecraft-Tool -f
+```
+
+Service stoppen:
+
+```bash
+sudo systemctl stop ZBenNoZ-Minecraft-Tool
+```
+
+---
+
+## Firewall
 
 ### Ubuntu (UFW)
+
 ```bash
 sudo ufw allow 3001/tcp
 ```
@@ -164,7 +243,7 @@ sudo ufw allow 3001/tcp
 
 ## Häufige Probleme (Troubleshooting)
 
-### ❌ Port 3001 bereits belegt
+### ❌ Port bereits belegt
 ```bash
 PORT=4000 npm run agent:web
 ```
@@ -172,34 +251,24 @@ PORT=4000 npm run agent:web
 ---
 
 ### ❌ Keine Verbindung zur Weboberfläche
-- Prüfe:
-  - Läuft der Agent?
-  - Firewall-Regeln
-  - Richtige IP / Domain
+- Läuft der Agent?
+- Firewall-Regeln prüfen
+- Richtige IP / Domain verwenden
 
 ---
 
 ### ❌ Lizenz wird nicht akzeptiert
-- Stelle sicher, dass:
-  - Die Lizenz vollständig und korrekt eingegeben wurde
-  - Datum/Uhrzeit des Systems korrekt sind
-  - Keine manipulierten Dateien verwendet werden
+- Lizenz korrekt eingegeben
+- Systemzeit korrekt
+- Keine manipulierten Dateien
 
 ---
 
 ## Support & Hilfe
 
-Bei Problemen, Fragen oder Feedback erreichst du uns über:
-
-- 💬 **Discord:**  
-  **ZCronus** (empfohlen für schnelle Antworten)  
-  **ZBenNoz**
-
-- 🌐 **Webseite:**  
-  https://zbennoz.com
-
-- 📧 **E-Mail:**  
-  service.zbennoz@gmail.com
+- 💬 Discord: **ZCronus** (empfohlen), **ZBenNoZ**
+- 🌐 Webseite: https://zbennoz.com
+- 📧 E-Mail: service.zbennoz@gmail.com
 
 ---
 

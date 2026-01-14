@@ -8,6 +8,7 @@ import { DownloadService } from '../core/DownloadService';
 const HYTALE_DOWNLOADER_ENV = 'HYTALE_DOWNLOADER_URL';
 const HYTALE_DOWNLOADER_ARCHIVE = 'hytale-downloader.zip';
 const HYTALE_DOWNLOADER_DIR = 'hytale-downloader';
+const HYTALE_ARCH_PATTERNS = ['x64', 'amd64', 'x86_64', 'arm64', 'aarch64'];
 const HYTALE_JAR = 'HytaleServer.jar';
 const HYTALE_ASSETS = 'Assets.zip';
 
@@ -18,6 +19,11 @@ export type HytaleInstallMode = 'downloader' | 'import';
 export interface HytaleInstallOptions {
   mode: HytaleInstallMode;
   downloaderUrl?: string;
+  downloaderUrlCandidates?: {
+    instance?: string | null;
+    global?: string | null;
+    env?: string | null;
+  };
   importServerPath?: string;
   importAssetsPath?: string;
   overwrite?: boolean;
@@ -46,26 +52,107 @@ const runCommand = async (command: string, args: string[], cwd: string, log?: Lo
   });
 };
 
-const findDownloaderBinary = async (rootDir: string): Promise<string | null> => {
-  const targetName = process.platform === 'win32' ? 'hytale-downloader.exe' : 'hytale-downloader';
-  const entries = await fs.readdir(rootDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = path.join(rootDir, entry.name);
-    if (entry.isFile() && entry.name === targetName) {
-      return entryPath;
-    }
-    if (entry.isDirectory()) {
-      const nested = await findDownloaderBinary(entryPath);
-      if (nested) return nested;
-    }
+const normalizeCandidate = (value?: string | null) => {
+  if (typeof value !== 'string') {
+    return { normalized: undefined, received: value } as const;
   }
-  return null;
+  const trimmed = value.trim();
+  return { normalized: trimmed.length > 0 ? trimmed : undefined, received: value } as const;
 };
 
-const ensureDownloader = async (downloaderUrl?: string, log?: LogFn): Promise<string> => {
-  const url = downloaderUrl ?? process.env[HYTALE_DOWNLOADER_ENV];
+const describeCandidate = (label: string, value: string | undefined, received: unknown) => {
+  if (value) {
+    return `${label}=set`;
+  }
+  if (typeof received === 'string') {
+    return `${label}=empty-string`;
+  }
+  return `${label}=undefined`;
+};
+
+export const resolveDownloaderUrl = (candidates: {
+  instance?: string | null;
+  global?: string | null;
+  env?: string | null;
+}): { url?: string; diagnostics: string } => {
+  const instance = normalizeCandidate(candidates.instance);
+  const global = normalizeCandidate(candidates.global);
+  const env = normalizeCandidate(candidates.env ?? undefined);
+
+  const diagnostics = [
+    describeCandidate('instance', instance.normalized, instance.received),
+    describeCandidate('global', global.normalized, global.received),
+    describeCandidate('env', env.normalized, env.received),
+  ].join(', ');
+
+  const url = instance.normalized ?? global.normalized ?? env.normalized;
+  return { url, diagnostics };
+};
+
+const isLikelyDownloaderName = (name: string) => {
+  const lower = name.toLowerCase();
+  return lower.includes('hytale') || lower.includes('downloader');
+};
+
+const isLikelyBinary = (name: string) => {
+  if (process.platform === 'win32') {
+    return name.toLowerCase().endsWith('.exe');
+  }
+  return !name.includes('.');
+};
+
+const scoreBinaryCandidate = (name: string) => {
+  const lower = name.toLowerCase();
+  let score = 0;
+  if (isLikelyDownloaderName(lower)) score += 5;
+  if (lower.includes('downloader')) score += 3;
+  if (lower.includes('hytale')) score += 3;
+  if (HYTALE_ARCH_PATTERNS.some((arch) => lower.includes(arch))) score += 1;
+  return score;
+};
+
+const collectDownloaderCandidates = async (rootDir: string): Promise<{ path: string; score: number }[]> => {
+  const entries = await fs.readdir(rootDir, { withFileTypes: true });
+  const candidates: { path: string; score: number }[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      candidates.push(...(await collectDownloaderCandidates(entryPath)));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!isLikelyBinary(entry.name)) continue;
+
+    const score = scoreBinaryCandidate(entry.name);
+    if (score > 0) {
+      candidates.push({ path: entryPath, score });
+    }
+  }
+
+  return candidates;
+};
+
+const findDownloaderBinary = async (rootDir: string): Promise<string | null> => {
+  const candidates = await collectDownloaderCandidates(rootDir);
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].path;
+};
+
+const listTopLevelEntries = async (dir: string, limit = 10) => {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.slice(0, limit).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+};
+
+const ensureDownloader = async (resolvedUrl: { url?: string; diagnostics: string }, log?: LogFn): Promise<string> => {
+  const url = resolvedUrl.url;
   if (!url) {
-    throw new Error(`Missing downloader URL. Set ${HYTALE_DOWNLOADER_ENV} or provide downloaderUrl.`);
+    throw new Error(`Missing downloader URL. Checked sources: ${resolvedUrl.diagnostics}.`);
   }
 
   const downloaderRoot = path.join(getInstallerCacheDir(), 'hytale');
@@ -89,7 +176,13 @@ const ensureDownloader = async (downloaderUrl?: string, log?: LogFn): Promise<st
 
   const binary = await findDownloaderBinary(extractDir);
   if (!binary) {
-    throw new Error('Downloader binary not found after extraction.');
+    const topLevel = await listTopLevelEntries(extractDir);
+    const searched = ['hytale', 'downloader', ...HYTALE_ARCH_PATTERNS];
+    throw new Error(
+      `Downloader binary not found after extraction. Extract path: ${extractDir}. ` +
+        `Top-level entries: ${topLevel.join(', ') || 'none'}. ` +
+        `Searched patterns: ${searched.join(', ')}`,
+    );
   }
 
   if (process.platform !== 'win32') {
@@ -192,7 +285,12 @@ export const installFromDownloader = async (
   options: HytaleInstallOptions,
   log?: LogFn,
 ): Promise<void> => {
-  const downloader = await ensureDownloader(options.downloaderUrl, log);
+  const resolvedUrl = resolveDownloaderUrl({
+    instance: options.downloaderUrl,
+    global: options.downloaderUrlCandidates?.global,
+    env: options.downloaderUrlCandidates?.env ?? process.env[HYTALE_DOWNLOADER_ENV],
+  });
+  const downloader = await ensureDownloader(resolvedUrl, log);
   const instanceDir = getInstanceDir(instanceId);
   const serverDir = getInstanceServerDir(instanceId);
   await ensureDir(instanceDir);
@@ -243,8 +341,20 @@ export const installFromImport = async (
   await validateInstall(serverDir);
 };
 
-export const checkDownloaderVersion = async (downloaderUrl?: string, log?: LogFn): Promise<string> => {
-  const downloader = await ensureDownloader(downloaderUrl, log);
+export const checkDownloaderVersion = async (
+  candidates: {
+    instance?: string | null;
+    global?: string | null;
+    env?: string | null;
+  },
+  log?: LogFn,
+): Promise<string> => {
+  const resolvedUrl = resolveDownloaderUrl({
+    instance: candidates.instance,
+    global: candidates.global,
+    env: candidates.env ?? process.env[HYTALE_DOWNLOADER_ENV],
+  });
+  const downloader = await ensureDownloader(resolvedUrl, log);
   const workDir = path.dirname(downloader);
   let output = '';
 

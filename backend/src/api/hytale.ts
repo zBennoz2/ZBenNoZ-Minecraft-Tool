@@ -9,6 +9,7 @@ import {
   verifyJavaMajor,
 } from '../services/hytaleInstaller.service';
 import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
+import { getGlobalHytaleDownloaderUrl } from '../services/globalSettings.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -52,7 +53,12 @@ router.post('/:id/hytale/update/check', async (req: Request, res: Response) => {
   if (!instance) return;
 
   try {
-    const version = await checkDownloaderVersion(instance.hytale?.install?.downloaderUrl);
+    const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
+    const version = await checkDownloaderVersion({
+      instance: instance.hytale?.install?.downloaderUrl,
+      global: globalDownloaderUrl,
+      env: process.env.HYTALE_DOWNLOADER_URL,
+    });
     res.json({ version });
   } catch (error: any) {
     console.error('Hytale version check failed', error);
@@ -93,12 +99,17 @@ router.post('/:id/hytale/update', async (req: Request, res: Response) => {
   }
 
   try {
+    const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
     await logPanel(instance.id, 'Updating Hytale server via Downloader CLI');
     await installFromDownloader(
       instance.id,
       {
         mode: 'downloader',
         downloaderUrl: instance.hytale?.install?.downloaderUrl,
+        downloaderUrlCandidates: {
+          global: globalDownloaderUrl,
+          env: process.env.HYTALE_DOWNLOADER_URL,
+        },
         overwrite: true,
       },
       (message) => logPanel(instance.id, message),

@@ -17,6 +17,7 @@ import {
   installFromImport,
   verifyJavaMajor,
 } from '../services/hytaleInstaller.service';
+import { getGlobalHytaleDownloaderUrl } from '../services/globalSettings.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -288,6 +289,12 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     hytaleImportAssetsPath?: string;
   };
 
+  const normalizeOptionalString = (value?: string) => {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
   if (!serverType || !allowedTypes.includes(serverType)) {
     return res.status(400).json({ error: 'serverType must be one of vanilla, paper, fabric, forge, neoforge, hytale' });
   }
@@ -378,11 +385,19 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       const mode = hytaleInstallMode ?? instance.hytale?.install?.mode ?? 'downloader';
       if (mode === 'downloader') {
         await logPrepare(id, 'Installing Hytale server via Downloader CLI');
+        const globalDownloaderUrl = await getGlobalHytaleDownloaderUrl();
+        const instanceDownloaderUrl = normalizeOptionalString(
+          hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+        );
         await installFromDownloader(
           id,
           {
             mode,
-            downloaderUrl: hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+            downloaderUrl: instanceDownloaderUrl,
+            downloaderUrlCandidates: {
+              global: globalDownloaderUrl,
+              env: process.env.HYTALE_DOWNLOADER_URL,
+            },
             overwrite,
           },
           (message) => logPrepare(id, message),
@@ -408,7 +423,9 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
           ...(instance.hytale ?? {}),
           install: {
             mode,
-            downloaderUrl: hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+            downloaderUrl: normalizeOptionalString(
+              hytaleDownloaderUrl ?? instance.hytale?.install?.downloaderUrl,
+            ),
             importServerPath: hytaleImportServerPath ?? instance.hytale?.install?.importServerPath,
             importAssetsPath: hytaleImportAssetsPath ?? instance.hytale?.install?.importAssetsPath,
           },

@@ -175,7 +175,7 @@ export const detectJavaCandidates = async (): Promise<JavaCandidate[]> => {
   return Array.from(unique.values())
 }
 
-const buildDownloadUrl = (major: number) => {
+const buildDownloadUrl = async (major: number) => {
   const osMap: Record<string, string> = {
     win32: 'windows',
     linux: 'linux',
@@ -197,38 +197,103 @@ const buildDownloadUrl = (major: number) => {
   }
   const osSlug = osMap[process.platform] ?? 'linux'
   const archSlug = archMap[process.arch] ?? 'x64'
-  const extension = process.platform === 'win32' ? 'zip' : 'tar.gz'
-  const url = `https://api.adoptium.net/v3/binary/latest/${major}/ga/${osSlug}/${archSlug}/jre/hotspot/normal/eclipse?project=jre&bundletype=${extension}`
-  return { url, extension }
+  const fallbackExtension = process.platform === 'win32' ? 'zip' : 'tar.gz'
+  const buildQuery = (imageType: 'jre' | 'jdk') => {
+    const params = new URLSearchParams({
+      architecture: archSlug,
+      heap_size: 'normal',
+      image_type: imageType,
+      jvm_impl: 'hotspot',
+      os: osSlug,
+      vendor: 'eclipse',
+    })
+    return `https://api.adoptium.net/v3/assets/latest/${major}/ga?${params.toString()}`
+  }
+
+  const inferExtension = (nameOrLink?: string | null) => {
+    if (!nameOrLink) return fallbackExtension
+    if (nameOrLink.endsWith('.tar.gz')) return 'tar.gz'
+    if (nameOrLink.endsWith('.zip')) return 'zip'
+    return fallbackExtension
+  }
+
+  const imageTypes: Array<'jre' | 'jdk'> = ['jre', 'jdk']
+  let lastError: Error | null = null
+  for (const imageType of imageTypes) {
+    const queryUrl = buildQuery(imageType)
+    try {
+      const response = await fetch(queryUrl)
+      if (!response.ok) {
+        continue
+      }
+      const payload = (await response.json()) as Array<{
+        binaries?: Array<{ package?: { link?: string; name?: string } }>
+      }>
+      const pkg = payload?.[0]?.binaries?.[0]?.package
+      if (pkg?.link) {
+        const extension = inferExtension(pkg.name ?? pkg.link)
+        return { url: pkg.link, extension }
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Failed to query Adoptium API')
+      continue
+    }
+  }
+
+  const suffix = lastError ? ` Last error: ${lastError.message}` : ''
+  throw new Error(
+    `No Adoptium Java ${major} download found for ${osSlug}/${archSlug}.${suffix}`,
+  )
 }
 
 const ensureDir = async (dir: string) => fs.mkdir(dir, { recursive: true })
 
-const downloadToFile = async (url: string, destination: string, onProgress: (progress: number) => void) => {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, { signal: controller.signal })
-    if (!response.ok || !response.body) {
-      throw new Error(`Download failed with status ${response.status}`)
-    }
-    const total = Number(response.headers.get('content-length') ?? 0)
-    let downloaded = 0
-    const writable = createWriteStream(destination)
-    const reader = response.body.getReader()
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      downloaded += value?.length ?? 0
-      writable.write(value)
-      if (total > 0) {
-        onProgress(Math.round((downloaded / total) * 100))
+const downloadToFile = async (
+  url: string,
+  destination: string,
+  onProgress: (progress: number) => void,
+  onRetry?: (attempt: number, error: Error) => void,
+) => {
+  const maxAttempts = 2
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      if (!response.ok || !response.body) {
+        throw new Error(`Download failed with status ${response.status}`)
       }
+      const total = Number(response.headers.get('content-length') ?? 0)
+      let downloaded = 0
+      const writable = createWriteStream(destination)
+      const reader = response.body.getReader()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        downloaded += value?.length ?? 0
+        writable.write(value)
+        if (total > 0) {
+          onProgress(Math.round((downloaded / total) * 100))
+        }
+      }
+      writable.end()
+      return
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('Download failed')
+      try {
+        await fs.unlink(destination)
+      } catch {
+        // ignore cleanup errors
+      }
+      if (attempt < maxAttempts) {
+        onRetry?.(attempt + 1, err)
+        continue
+      }
+      throw err
+    } finally {
+      clearTimeout(timeout)
     }
-    writable.end()
-  } finally {
-    clearTimeout(timeout)
   }
 }
 
@@ -317,33 +382,57 @@ class JavaInstallManager {
     const installDir = getManagedInstallDir(major)
     await ensureDir(installDir)
 
-    const { url, extension } = buildDownloadUrl(major)
-    const downloadDir = getDownloadCacheDir()
-    await ensureDir(downloadDir)
-    const archivePath = path.join(downloadDir, `temurin-jre-${major}-${process.platform}-${process.arch}.${extension}`)
+    try {
+      const { url, extension } = await buildDownloadUrl(major)
+      const downloadDir = getDownloadCacheDir()
+      await ensureDir(downloadDir)
+      const archivePath = path.join(
+        downloadDir,
+        `temurin-jre-${major}-${process.platform}-${process.arch}.${extension}`,
+      )
 
-    job.emit({ jobId: job.id, phase: 'download', progress: 0 })
-    await downloadToFile(url, archivePath, (progress) => {
-      job.emit({ jobId: job.id, phase: 'download', progress })
-    })
+      console.info('[java] download url', { major, url })
+      job.emit({ jobId: job.id, phase: 'download', progress: 0, message: `Downloading Java ${major}…` })
+      await downloadToFile(
+        url,
+        archivePath,
+        (progress) => {
+          job.emit({ jobId: job.id, phase: 'download', progress })
+        },
+        (attempt, error) => {
+          job.emit({
+            jobId: job.id,
+            phase: 'download',
+            progress: 0,
+            message: `Retrying download (attempt ${attempt}) after error: ${error.message}`,
+          })
+        },
+      )
 
-    job.emit({ jobId: job.id, phase: 'extract', progress: 5 })
-    await extractArchive(archivePath, installDir, extension)
-    job.emit({ jobId: job.id, phase: 'extract', progress: 60 })
+      job.emit({ jobId: job.id, phase: 'extract', progress: 5 })
+      await extractArchive(archivePath, installDir, extension)
+      job.emit({ jobId: job.id, phase: 'extract', progress: 60 })
 
-    const javaBin = await findJavaBinaryInDir(installDir)
-    if (!javaBin) {
-      throw new Error('Java binary not found after extraction')
+      const javaBin = await findJavaBinaryInDir(installDir)
+      if (!javaBin) {
+        throw new Error('Java binary not found after extraction')
+      }
+
+      job.emit({ jobId: job.id, phase: 'verify', progress: 80 })
+      const valid = await verifyJavaMajor(javaBin, major)
+      if (!valid) {
+        throw new Error(`Installed Java did not match expected major ${major}`)
+      }
+
+      job.javaPath = javaBin
+      job.emit({ jobId: job.id, phase: 'done', progress: 100, javaPath: javaBin })
+    } catch (error) {
+      const manualUrl = `https://adoptium.net/temurin/releases/?version=${major}`
+      const baseMessage = error instanceof Error ? error.message : 'Java install failed'
+      throw new Error(
+        `${baseMessage}. If download fails, set the Java Path in Settings or install Java ${major} manually: ${manualUrl}`,
+      )
     }
-
-    job.emit({ jobId: job.id, phase: 'verify', progress: 80 })
-    const valid = await verifyJavaMajor(javaBin, major)
-    if (!valid) {
-      throw new Error(`Installed Java did not match expected major ${major}`)
-    }
-
-    job.javaPath = javaBin
-    job.emit({ jobId: job.id, phase: 'done', progress: 100, javaPath: javaBin })
   }
 }
 
