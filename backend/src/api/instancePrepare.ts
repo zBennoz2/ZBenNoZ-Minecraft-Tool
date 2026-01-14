@@ -9,7 +9,7 @@ import { InstanceManager } from '../core/InstanceManager';
 import { LogService } from '../core/LogService';
 import { logStreamService } from '../services/logStream.service';
 import { LoaderType, ServerType } from '../core/types';
-import { resolveJavaForInstance } from '../services/java.service';
+import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
 import { InstanceActionError } from '../core/InstanceActionError';
 import {
   HytaleInstallMode,
@@ -304,6 +304,12 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       minecraftVersion ?? instance.minecraftVersion ?? '',
       serverType,
     );
+    const javaRequirement =
+      serverType === 'hytale'
+        ? getJavaRequirement(minecraftVersion ?? instance.minecraftVersion ?? '', serverType)
+        : resolved.status === 'needs_java'
+          ? resolved.requirement
+          : undefined;
     if (resolved.status === 'needs_java') {
       return res.status(409).json({
         error: 'NEEDS_JAVA',
@@ -315,16 +321,23 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     }
     javaBin = resolved.javaBin;
     if (serverType === 'hytale') {
+      if (!javaRequirement) {
+        await logPrepare(id, 'Java requirement missing for Hytale instance prepare');
+        return res.status(500).json({
+          error: 'JAVA_REQUIREMENT_MISSING',
+          detail: 'Java requirement could not be determined for Hytale instance prepare',
+        });
+      }
       try {
-        await verifyJavaMajor(javaBin || 'java', resolved.requirement.major);
+        await verifyJavaMajor(javaBin || 'java', javaRequirement.major);
       } catch (error: any) {
-        await logPrepare(id, `Java ${resolved.requirement.major} required. ${error?.message ?? 'Check failed.'}`);
+        await logPrepare(id, `Java ${javaRequirement.major} required. ${error?.message ?? 'Check failed.'}`);
         return res.status(409).json({
           error: 'NEEDS_JAVA',
-          recommendedMajor: resolved.requirement.major,
-          requirement: resolved.requirement,
+          recommendedMajor: javaRequirement.major,
+          requirement: javaRequirement,
           candidates: resolved.candidates,
-          detail: error?.message ?? `Java ${resolved.requirement.major} required`,
+          detail: error?.message ?? `Java ${javaRequirement.major} required`,
         });
       }
     }
