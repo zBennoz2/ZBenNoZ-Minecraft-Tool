@@ -5,6 +5,8 @@ import LicenseGate from './components/LicenseGate'
 import ConsolePage from './pages/Console'
 import Dashboard from './pages/Dashboard'
 import FilesPage from './pages/Files'
+import InstanceDetail from './pages/InstanceDetail'
+import InstanceOverview from './pages/InstanceOverview'
 import PropertiesPage from './pages/Properties'
 import SettingsPage from './pages/Settings'
 import WhitelistPage from './pages/Whitelist'
@@ -21,12 +23,15 @@ function App() {
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Dashboard />} />
-            <Route path="instances/:id/console" element={<ConsolePage />} />
-            <Route path="instances/:id/files" element={<FilesPage />} />
-            <Route path="instances/:id/properties" element={<PropertiesPage />} />
-            <Route path="instances/:id/settings" element={<SettingsPage />} />
-            <Route path="instances/:id/whitelist" element={<WhitelistPage />} />
-            <Route path="instances/:id/tasks" element={<TasksPage />} />
+            <Route path="instances/:id" element={<InstanceDetail />}>
+              <Route index element={<InstanceOverview />} />
+              <Route path="console" element={<ConsolePage />} />
+              <Route path="files" element={<FilesPage />} />
+              <Route path="properties" element={<PropertiesPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="whitelist" element={<WhitelistPage />} />
+              <Route path="tasks" element={<TasksPage />} />
+            </Route>
             <Route path="system" element={<SystemPage />} />
             <Route path="diagnostics" element={<DiagnosticsPage />} />
             <Route path="about" element={<AboutSupport />} />

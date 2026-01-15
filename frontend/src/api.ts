@@ -222,6 +222,9 @@ export interface HytaleAuthStatus {
   matchedLine?: string
   codeIssuedAt?: string
   expiresAt?: string
+  expiresInSeconds?: number
+  pollIntervalSeconds?: number
+  authErrorCode?: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied'
   message?: string
   progress?: number
   updatedAt?: string
