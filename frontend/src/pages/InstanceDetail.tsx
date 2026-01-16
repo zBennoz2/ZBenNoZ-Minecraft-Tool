@@ -40,7 +40,7 @@ export function InstanceDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeAction, setActiveAction] = useState<ActionState | null>(null)
-  const pollerRef = useRef<NodeJS.Timeout | null>(null)
+  const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isBusy = Boolean(activeAction)
 

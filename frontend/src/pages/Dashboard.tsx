@@ -68,11 +68,11 @@ export function Dashboard() {
     Record<string, string>
   >({})
   const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const pollerRef = useRef<NodeJS.Timeout | null>(null)
+  const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [createName, setCreateName] = useState('')
   const [createGame, setCreateGame] = useState<CreateGame>('')
-  const [createServerType, setCreateServerType] = useState<ServerType | ''>('')
+  const [createServerType, setCreateServerType] = useState<ServerType | null>(null)
   const [minecraftVersion, setMinecraftVersion] = useState('')
   const [loaderVersion, setLoaderVersion] = useState('')
   const [hytaleInstallMode, setHytaleInstallMode] = useState<HytaleInstallMode>('downloader')
@@ -94,7 +94,8 @@ export function Dashboard() {
   const isHytale = createGame === 'hytale'
   const requiresLoader =
     createGame === 'minecraft' &&
-    ['fabric', 'forge', 'neoforge'].includes(createServerType)
+    Boolean(createServerType) &&
+    ['fabric', 'forge', 'neoforge'].includes(createServerType ?? '')
   const showLoaderSelect = requiresLoader && loaderOptions.length > 0
 
   const loaderType = useMemo(() => {
@@ -186,6 +187,10 @@ export function Dashboard() {
 
   const handleCreateInstance = async (event: FormEvent) => {
     event.preventDefault()
+    if (!createServerType) {
+      setCreateError('Bitte Server-Typ auswählen')
+      return
+    }
     setCreating(true)
     setCreateError(null)
 
@@ -220,7 +225,7 @@ export function Dashboard() {
       const created = await createInstance(payload)
       setCreateName('')
       setCreateGame('')
-      setCreateServerType('')
+      setCreateServerType(null)
       setMinecraftVersion('')
       setLoaderVersion('')
       setIsCreateOpen(false)
@@ -469,8 +474,9 @@ export function Dashboard() {
                       setHytaleImportServerPath('')
                       setHytaleImportAssetsPath('')
                     } else {
-                      setCreateServerType('')
+                      setCreateServerType(null)
                     }
+                    setCreateError(null)
                   }}
                   required
                 >
@@ -490,12 +496,13 @@ export function Dashboard() {
                   <label className="form__field">
                     <span>Server Type *</span>
                     <select
-                      value={createServerType}
+                      value={createServerType ?? ''}
                       onChange={(event) => {
                         const value = event.target.value as ServerType | ''
-                        setCreateServerType(value)
+                        setCreateServerType(value || null)
                         setMinecraftVersion('')
                         setLoaderVersion('')
+                        setCreateError(null)
                       }}
                       required
                     >

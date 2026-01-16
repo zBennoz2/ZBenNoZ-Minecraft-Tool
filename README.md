@@ -166,6 +166,7 @@ Wenn nichts gesetzt ist, nutzt der Agent automatisch die Default-URL.
 - **Prepare-Logs** sind ein eigener Stream für den Download-/Installations-Workflow und laufen **auch dann, wenn der Server nicht startet**.
 - **Server-Console** zeigt nur die laufende Serverausgabe.
 - Der OAuth-Code erscheint sofort im **Hytale-Prepare-Panel** (nicht mehr nur in der Console).
+- Die Prepare-Logs sind unabhängig von der Server-Console und bleiben sichtbar, auch wenn noch kein Server läuft.
 
 ### Hytale Prepare Ablauf
 
@@ -181,6 +182,13 @@ Wenn nichts gesetzt ist, nutzt der Agent automatisch die Default-URL.
 3. Code bestätigen → der Downloader erkennt den Erfolg automatisch und setzt den Download fort.
 4. Die Credentials werden anschließend wiederverwendet.
 
+**Polling-Details (RFC 8628):**
+
+- Das Tool respektiert `expires_in` und `interval` aus dem Device-Flow.
+- Bei `authorization_pending` wird weiter gepollt, bei `slow_down` wird das Intervall um +5s erhöht.
+- `expired_token` → Code abgelaufen (neuen Code generieren).
+- `access_denied` → Benutzer hat den Zugriff abgelehnt.
+
 **Credentials-Speicherort (pro Instanz):**
 
 ```
@@ -191,6 +199,7 @@ Wenn die Datei beschädigt oder unvollständig ist, wird sie beim nächsten Prep
 
 ### Typische Fehler (Hytale)
 
+- **"Loading forever"** → der Device-Flow wird nicht weiter gepollt (z.B. `slow_down`/`interval` ignoriert).
 - **Code abgelaufen** → sofort **Retry Prepare** klicken, um einen neuen Code zu erhalten.
 - **Uhrzeit / Zeitzone** → Stelle sicher, dass die Host-Zeit korrekt ist.
 - **Credentials löschen** → `<instance>/.hytale-downloader-credentials.json` entfernen und Prepare erneut ausführen.

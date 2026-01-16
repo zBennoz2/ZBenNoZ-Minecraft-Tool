@@ -408,6 +408,7 @@ const runDownloaderWithStatus = async (
   let buffer = '';
   let currentCode: string | undefined;
   let lastAuthError: string | undefined;
+  let pollIntervalSeconds = 5;
 
   const child = spawn(command, args, { cwd, env });
 
@@ -426,16 +427,21 @@ const runDownloaderWithStatus = async (
     await log?.(line);
 
     const info = parseHytaleAuthLine(line);
-    if (info?.authError) {
+    if (info?.authErrorCode) {
+      lastAuthError = line;
+    }
+    if (info?.authError && !info?.authErrorCode) {
       lastAuthError = line;
       await updateHytaleAuthStatus(instanceId, {
         state: 'needs_auth',
         authenticated: false,
+        authErrorCode: info.authErrorCode,
         message: 'Authentication failed or expired. Retry Prepare to generate a new code.',
         matchedLine: info.matchedLine,
       });
       emitPrepareEvent('error', 'Authentication failed or expired. Retry Prepare to generate a new code.', {
         matchedLine: info.matchedLine,
+        authErrorCode: info.authErrorCode,
       });
     }
 
@@ -457,6 +463,9 @@ const runDownloaderWithStatus = async (
       const isNewCode = Boolean(nextCode && previousCode && nextCode !== previousCode);
       const issuedAt = info.userCode && info.userCode !== previousCode ? new Date().toISOString() : undefined;
       currentCode = nextCode;
+      if (typeof info.intervalSeconds === 'number' && Number.isFinite(info.intervalSeconds)) {
+        pollIntervalSeconds = Math.max(5, info.intervalSeconds);
+      }
 
       const message = isNewCode
         ? `New authentication code generated. Previous code ${previousCode} is no longer valid.`
@@ -475,6 +484,9 @@ const runDownloaderWithStatus = async (
         ...update,
         ...(issuedAt ? { codeIssuedAt: issuedAt } : {}),
         ...(info.expiresAt ? { expiresAt: info.expiresAt } : {}),
+        ...(typeof info.expiresInSeconds === 'number' ? { expiresInSeconds: info.expiresInSeconds } : {}),
+        ...(typeof info.intervalSeconds === 'number' ? { pollIntervalSeconds: info.intervalSeconds } : {}),
+        ...(info.authErrorCode ? { authErrorCode: info.authErrorCode } : { authErrorCode: undefined }),
       });
 
       if (isNewCode) {
@@ -486,11 +498,68 @@ const runDownloaderWithStatus = async (
         userCode: nextCode,
         previousUserCode: isNewCode ? previousCode : undefined,
         expiresAt: info.expiresAt,
+        expiresIn: info.expiresInSeconds,
+        interval: info.intervalSeconds ?? pollIntervalSeconds,
+        authErrorCode: info.authErrorCode,
         codeIssuedAt: issuedAt,
       });
     }
 
-    if (info?.waiting) {
+    if (info?.authErrorCode === 'authorization_pending') {
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'waiting_for_auth',
+        message: 'Waiting for authentication confirmation…',
+        pollIntervalSeconds,
+        authErrorCode: info.authErrorCode,
+      });
+      emitPrepareEvent('waiting_for_auth', 'Waiting for authentication confirmation…', {
+        authErrorCode: info.authErrorCode,
+        interval: pollIntervalSeconds,
+      });
+    }
+
+    if (info?.authErrorCode === 'slow_down') {
+      pollIntervalSeconds = Math.max(5, pollIntervalSeconds + 5);
+      const message = `Authorization pending. Slowing polling to ${pollIntervalSeconds}s.`;
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'waiting_for_auth',
+        message,
+        pollIntervalSeconds,
+        authErrorCode: info.authErrorCode,
+      });
+      emitPrepareEvent('waiting_for_auth', message, {
+        authErrorCode: info.authErrorCode,
+        interval: pollIntervalSeconds,
+      });
+    }
+
+    if (info?.authErrorCode === 'expired_token') {
+      const message = 'Authentication code expired. Generate a new code to continue.';
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'needs_auth',
+        authenticated: false,
+        message,
+        authErrorCode: info.authErrorCode,
+      });
+      emitPrepareEvent('needs_auth', message, {
+        authErrorCode: info.authErrorCode,
+      });
+    }
+
+    if (info?.authErrorCode === 'access_denied') {
+      const message = 'User denied authentication. Generate a new code to continue.';
+      await updateHytaleAuthStatus(instanceId, {
+        state: 'needs_auth',
+        authenticated: false,
+        message,
+        authErrorCode: info.authErrorCode,
+      });
+      emitPrepareEvent('needs_auth', message, {
+        authErrorCode: info.authErrorCode,
+      });
+    }
+
+    if (info?.waiting && !info?.authErrorCode) {
       await updateHytaleAuthStatus(instanceId, {
         state: 'waiting_for_auth',
         message: 'Waiting for authentication confirmation…',
@@ -657,6 +726,17 @@ export const installFromDownloader = async (
   if (!jarCandidate) {
     const candidates = await listJarCandidates(serverDir);
     const files = candidates.map((candidate) => candidate.name).slice(0, 10);
+    prepareEventService.emitEvent(instanceId, {
+      ts: new Date().toISOString(),
+      level: 'error',
+      phase: 'error',
+      message: 'No server JAR found in extracted Hytale game.zip.',
+      data: {
+        extractPath: serverDir,
+        jarCandidates: files,
+        jarCandidateCount: candidates.length,
+      },
+    });
     throw new Error(
       `No server JAR found in extracted Hytale game.zip. Searched ${candidates.length} jar(s) in ${serverDir}. ` +
         `Found: ${files.join(', ') || 'none'}`,
@@ -667,6 +747,16 @@ export const installFromDownloader = async (
   if (!assetsCandidate) {
     const entries = await listEntries(serverDir);
     const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name).slice(0, 10);
+    prepareEventService.emitEvent(instanceId, {
+      ts: new Date().toISOString(),
+      level: 'error',
+      phase: 'error',
+      message: 'Assets.zip not found in extracted Hytale game.zip.',
+      data: {
+        extractPath: serverDir,
+        topLevelFiles: files,
+      },
+    });
     throw new Error(
       `Assets.zip not found in extracted Hytale game.zip. Checked ${serverDir}. ` +
         `Top-level files: ${files.join(', ') || 'none'}`,

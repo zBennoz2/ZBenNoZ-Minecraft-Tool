@@ -133,7 +133,7 @@ export function InstanceOverview() {
   const [now, setNow] = useState(Date.now())
   const [javaInstall, setJavaInstall] = useState<JavaInstallState | undefined>(undefined)
   const [isPrepareModalOpen, setIsPrepareModalOpen] = useState(false)
-  const pollerRef = useRef<NodeJS.Timeout | null>(null)
+  const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const javaInstallStreamRef = useRef<EventSource | null>(null)
   const prepareEventSourceRef = useRef<EventSource | null>(null)
 

@@ -211,9 +211,11 @@ app.use((err: Error, _req: express.Request, res: express.Response, next: express
 
 console.log('[Security] Protected routes: /api/* (except /api/health). API key required when configured.');
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Minecraft Panel Backend listening on port ${PORT}`);
   taskScheduler.start();
   sleepService.start();
   pingWakeService.start();
 });
+
+server.setTimeout(0);
