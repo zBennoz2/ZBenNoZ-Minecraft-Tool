@@ -572,6 +572,45 @@ body {
   width: fit-content;
 }
 
+.instance-tile__version {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.instance-tile__version-header {
+  font-weight: 600;
+}
+
+.instance-tile__version-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.instance-tile__version-grid span {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.instance-tile__version-grid strong {
+  font-size: 0.95rem;
+}
+
+.instance-tile__version-status {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.instance-tile__version-error {
+  font-size: 0.85rem;
+  color: var(--color-danger);
+}
+
 .instance-tile__actions {
   display: flex;
   gap: var(--space-2);
@@ -934,6 +973,13 @@ body {
   justify-content: space-between;
   gap: var(--space-3);
   align-items: flex-start;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .prepare-modal__status {

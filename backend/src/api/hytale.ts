@@ -7,6 +7,8 @@ import {
   installFromDownloader,
   verifyJavaMajor,
 } from '../services/hytaleInstaller.service';
+import { getHytaleVersionSnapshot } from '../services/hytaleVersion.service';
+import { startHytaleUpdate } from '../services/hytaleUpdate.service';
 import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
 import { getGlobalHytaleDownloaderUrl } from '../services/globalSettings.service';
 
@@ -42,6 +44,38 @@ router.get('/:id/hytale/auth', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Failed to read Hytale auth status', error);
     res.status(500).json({ error: 'Failed to read auth status' });
+  }
+});
+
+router.get('/:id/version', async (req: Request, res: Response) => {
+  const instance = await ensureHytaleInstance(req.params.id, res);
+  if (!instance) return;
+
+  try {
+    const snapshot = await getHytaleVersionSnapshot(instance.id);
+    res.json(snapshot);
+  } catch (error: any) {
+    console.error('Failed to read Hytale version info', error);
+    res.status(500).json({ error: error?.message ?? 'Failed to read version info' });
+  }
+});
+
+router.post('/:id/update', async (req: Request, res: Response) => {
+  const instance = await ensureHytaleInstance(req.params.id, res);
+  if (!instance) return;
+
+  try {
+    const result = await startHytaleUpdate(instance.id);
+    if (result.status === 'up_to_date') {
+      return res.status(200).json(result);
+    }
+    if (result.status === 'running') {
+      return res.status(202).json(result);
+    }
+    return res.status(202).json(result);
+  } catch (error: any) {
+    console.error('Failed to start Hytale update', error);
+    return res.status(500).json({ error: error?.message ?? 'Failed to start update' });
   }
 });
 

@@ -13,6 +13,7 @@ export interface HytaleInstallConfig {
   skipUpdateCheck?: boolean
   importServerPath?: string
   importAssetsPath?: string
+  installedVersion?: string
 }
 
 export interface HytaleConfig {
@@ -249,6 +250,28 @@ export interface PrepareEvent {
   data?: Record<string, unknown>
   runId: string
 }
+
+export interface HytaleVersionInfo {
+  installed: string | null
+  latest: string | null
+  updateAvailable: boolean
+}
+
+export interface JobInfo {
+  id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress: number
+  phase?: string
+  message?: string
+  error?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type HytaleUpdateStartResult =
+  | { status: 'up_to_date'; installed: string | null; latest: string | null }
+  | { status: 'started'; jobId: string; installed: string | null; latest: string }
+  | { status: 'running'; jobId: string }
 
 interface CatalogVersionsResponse {
   versions: string[]
@@ -506,6 +529,18 @@ export async function prepareInstance(
 
 export async function deleteInstance(id: string): Promise<void> {
   await fetchApi<void>(`/api/instances/${id}`, { method: 'DELETE' })
+}
+
+export async function getHytaleVersionInfo(id: string): Promise<HytaleVersionInfo> {
+  return fetchApi<HytaleVersionInfo>(`/api/instances/${id}/version`)
+}
+
+export async function startHytaleUpdate(id: string): Promise<HytaleUpdateStartResult> {
+  return fetchApi<HytaleUpdateStartResult>(`/api/instances/${id}/update`, { method: 'POST' })
+}
+
+export async function getJob(jobId: string): Promise<JobInfo> {
+  return fetchApi<JobInfo>(`/api/jobs/${jobId}`)
 }
 
 export async function getJavaRecommendation(

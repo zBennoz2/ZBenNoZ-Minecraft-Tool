@@ -87,14 +87,35 @@ The following paths should be persisted in volume mounts:
 
 ## Updates
 
-Use the **Check version** and **Update** buttons in Settings. The panel runs:
+Use the **Update** button in the dashboard instance widget to fetch the latest Hytale bundle
+from the configured release manifest URL. The panel runs:
 
 ```bash
-./hytale-downloader -print-version
-./hytale-downloader -download-path game.zip
+curl $HYTALE_RELEASE_MANIFEST_URL
 ```
 
-and re-installs server files and assets.
+and re-installs server files and assets. Configure the manifest source via:
+
+```
+HYTALE_RELEASE_MANIFEST_URL=https://example.com/hytale/releases.json
+```
+
+Manifest example (JSON):
+
+```json
+{
+  "latest": "1.4.0",
+  "releases": [
+    {
+      "version": "1.4.0",
+      "server": {
+        "url": "https://cdn.example.com/hytale/1.4.0/server.zip",
+        "sha256": "0123456789abcdef..."
+      }
+    }
+  ]
+}
+```
 
 ## Troubleshooting
 

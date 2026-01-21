@@ -21,6 +21,7 @@ import playersRouter from './api/players';
 import licenseRouter, { licenseGuardMiddleware } from './api/license';
 import systemRouter from './api/system';
 import hytaleRouter from './api/hytale';
+import jobsRouter from './api/jobs';
 import pkg from '../package.json';
 
 const app = express();
@@ -176,6 +177,7 @@ apiRouter.use('/instances', playersRouter);
 apiRouter.use('/instances', rconSettingsRouter);
 apiRouter.use('/', tasksRouter);
 apiRouter.use('/', javaRouter);
+apiRouter.use('/', jobsRouter);
 apiRouter.use('/instances', sleepRouter);
 apiRouter.use('/instances', backupsRouter);
 apiRouter.use('/system', systemRouter);

@@ -30,6 +30,7 @@ export interface HytaleInstallConfig {
   skipUpdateCheck?: boolean;
   importServerPath?: string;
   importAssetsPath?: string;
+  installedVersion?: string;
 }
 
 export interface HytaleConfig {

@@ -6,6 +6,7 @@ export interface JobInfo {
   id: string
   status: JobStatus
   progress: number
+  phase?: string
   message?: string
   error?: string
   createdAt: string

@@ -102,6 +102,10 @@ export class DownloadService {
     return this.computeFileHash(filePath, 'sha1');
   }
 
+  async sha256File(filePath: string): Promise<string> {
+    return this.computeFileHash(filePath, 'sha256');
+  }
+
   private async computeFileHash(filePath: string, algorithm: string): Promise<string> {
     const hash = createHash(algorithm);
 

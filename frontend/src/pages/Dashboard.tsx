@@ -4,17 +4,22 @@ import BackButton from '../components/BackButton'
 import {
   CreateInstancePayload,
   HytaleInstallMode,
+  HytaleVersionInfo,
   Instance,
   InstanceMetrics,
   InstanceStatus,
+  JobInfo,
   LoaderType,
   ServerType,
   createInstance,
+  getHytaleVersionInfo,
   getCatalogVersions,
+  getJob,
   getInstanceMetrics,
   getInstanceStatus,
   listInstances,
   restartInstance,
+  startHytaleUpdate,
   startInstance,
   stopInstance,
 } from '../api'
@@ -67,8 +72,21 @@ export function Dashboard() {
   const [metricsErrorByInstanceId, setMetricsErrorByInstanceId] = useState<
     Record<string, string>
   >({})
+  const [hytaleVersionsByInstanceId, setHytaleVersionsByInstanceId] = useState<
+    Record<string, HytaleVersionInfo>
+  >({})
+  const [hytaleVersionErrorByInstanceId, setHytaleVersionErrorByInstanceId] = useState<
+    Record<string, string>
+  >({})
+  const [hytaleUpdateJobByInstanceId, setHytaleUpdateJobByInstanceId] = useState<
+    Record<string, JobInfo | null>
+  >({})
+  const [hytaleUpdateErrorByInstanceId, setHytaleUpdateErrorByInstanceId] = useState<
+    Record<string, string>
+  >({})
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const updatePollersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
   const [createName, setCreateName] = useState('')
   const [createGame, setCreateGame] = useState<CreateGame>('')
@@ -88,6 +106,11 @@ export function Dashboard() {
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [updateModal, setUpdateModal] = useState<{
+    instanceId: string
+    installed: string | null
+    latest: string | null
+  } | null>(null)
 
   const isBusy = Boolean(activeAction)
 
@@ -113,6 +136,8 @@ export function Dashboard() {
       const ids = result.map((instance) => instance.id)
       await Promise.all(ids.map((instanceId) => refreshInstanceStatus(instanceId)))
       await Promise.all(ids.map((instanceId) => refreshInstanceMetrics(instanceId)))
+      const hytaleIds = result.filter((instance) => instance.serverType === 'hytale').map((instance) => instance.id)
+      await Promise.all(hytaleIds.map((instanceId) => refreshHytaleVersion(instanceId)))
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load instances'
       setError(message)
@@ -143,6 +168,65 @@ export function Dashboard() {
     }
   }
 
+  const refreshHytaleVersion = async (instanceId: string) => {
+    try {
+      const versionInfo = await getHytaleVersionInfo(instanceId)
+      setHytaleVersionsByInstanceId((prev) => ({ ...prev, [instanceId]: versionInfo }))
+      setHytaleVersionErrorByInstanceId((prev) => ({ ...prev, [instanceId]: '' }))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Versionsprüfung fehlgeschlagen'
+      setHytaleVersionErrorByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+    }
+  }
+
+  const startUpdatePolling = (instanceId: string, jobId: string) => {
+    const existing = updatePollersRef.current[instanceId]
+    if (existing) {
+      clearInterval(existing)
+    }
+
+    const poll = async () => {
+      try {
+        const job = await getJob(jobId)
+        setHytaleUpdateJobByInstanceId((prev) => ({ ...prev, [instanceId]: job }))
+        if (job.status === 'completed' || job.status === 'failed') {
+          const poller = updatePollersRef.current[instanceId]
+          if (poller) clearInterval(poller)
+          delete updatePollersRef.current[instanceId]
+          await refreshHytaleVersion(instanceId)
+          if (job.status === 'failed') {
+            setHytaleUpdateErrorByInstanceId((prev) => ({
+              ...prev,
+              [instanceId]: job.error ?? 'Update fehlgeschlagen',
+            }))
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Update-Status konnte nicht geladen werden'
+        setHytaleUpdateErrorByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+      }
+    }
+
+    void poll()
+    updatePollersRef.current[instanceId] = setInterval(poll, 2000)
+  }
+
+  const handleStartUpdate = async (instanceId: string) => {
+    setHytaleUpdateErrorByInstanceId((prev) => ({ ...prev, [instanceId]: '' }))
+    try {
+      const result = await startHytaleUpdate(instanceId)
+      if (result.status === 'up_to_date') {
+        await refreshHytaleVersion(instanceId)
+        return
+      }
+      const jobId = result.jobId
+      startUpdatePolling(instanceId, jobId)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Update konnte nicht gestartet werden'
+      setHytaleUpdateErrorByInstanceId((prev) => ({ ...prev, [instanceId]: message }))
+    }
+  }
+
   const handleAction = async (id: string, type: ActionType) => {
     if (isBusy) return
     setActiveAction({ id, type })
@@ -166,6 +250,22 @@ export function Dashboard() {
   const handleOpenCreate = () => {
     setIsCreateOpen(true)
     setCreateError(null)
+  }
+
+  const handleOpenUpdateModal = (instanceId: string) => {
+    const versionInfo = hytaleVersionsByInstanceId[instanceId]
+    setUpdateModal({
+      instanceId,
+      installed: versionInfo?.installed ?? null,
+      latest: versionInfo?.latest ?? null,
+    })
+  }
+
+  const handleConfirmUpdate = async () => {
+    if (!updateModal) return
+    const { instanceId } = updateModal
+    setUpdateModal(null)
+    await handleStartUpdate(instanceId)
   }
 
   const loadCatalog = async (serverType: ServerType) => {
@@ -302,6 +402,13 @@ export function Dashboard() {
     }
   }, [instances])
 
+  useEffect(() => {
+    return () => {
+      Object.values(updatePollersRef.current).forEach((poller) => clearInterval(poller))
+      updatePollersRef.current = {}
+    }
+  }, [])
+
   return (
     <section className="page">
       <div className="page__toolbar">
@@ -350,6 +457,25 @@ export function Dashboard() {
           const startDisabled = isBusy || isStarting || status === 'running'
           const stopDisabled = isBusy || status !== 'running'
           const restartDisabled = isBusy || status !== 'running'
+          const versionInfo = hytaleVersionsByInstanceId[instance.id]
+          const versionError = hytaleVersionErrorByInstanceId[instance.id]
+          const updateJob = hytaleUpdateJobByInstanceId[instance.id]
+          const updateError = hytaleUpdateErrorByInstanceId[instance.id]
+          const updateInProgress =
+            updateJob?.status === 'running' || updateJob?.status === 'pending'
+          const updateAvailable = Boolean(versionInfo?.updateAvailable)
+          const installedText = versionInfo?.installed ?? '—'
+          const latestText = updateAvailable
+            ? versionInfo?.latest ?? '—'
+            : versionInfo?.latest && installedText !== '—'
+              ? 'Up to date'
+              : '—'
+          const updateStatusMessage =
+            updateJob?.status === 'failed'
+              ? updateJob.error ?? 'Update fehlgeschlagen'
+              : updateJob?.status === 'completed'
+                ? updateJob.message ?? 'Update abgeschlossen'
+                : updateJob?.message ?? (updateInProgress ? 'Updating…' : '')
 
           return (
             <article key={instance.id} className="instance-tile">
@@ -389,6 +515,38 @@ export function Dashboard() {
               {metricsError ? (
                 <div className="instance-tile__warning" title={metricsError}>
                   Metrics unavailable
+                </div>
+              ) : null}
+
+              {instance.serverType === 'hytale' ? (
+                <div className="instance-tile__version">
+                  <div className="instance-tile__version-header">Hytale Version</div>
+                  <div className="instance-tile__version-grid">
+                    <div>
+                      <span>Installiert</span>
+                      <strong>{installedText}</strong>
+                    </div>
+                    <div>
+                      <span>Verfügbar</span>
+                      <strong>{latestText}</strong>
+                    </div>
+                  </div>
+                  {versionError ? (
+                    <div className="instance-tile__version-error">{versionError}</div>
+                  ) : null}
+                  {updateStatusMessage ? (
+                    <div className="instance-tile__version-status">{updateStatusMessage}</div>
+                  ) : null}
+                  {updateError ? (
+                    <div className="instance-tile__version-error">{updateError}</div>
+                  ) : null}
+                  <button
+                    className="btn btn--secondary"
+                    disabled={!updateAvailable || updateInProgress || installedText === '—'}
+                    onClick={() => handleOpenUpdateModal(instance.id)}
+                  >
+                    {updateInProgress ? 'Updating…' : updateAvailable ? 'Update' : 'Aktuell'}
+                  </button>
                 </div>
               ) : null}
 
@@ -432,6 +590,33 @@ export function Dashboard() {
           )
         })}
       </div>
+
+      {updateModal ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setUpdateModal(null)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal__header">
+              <div>
+                <h2>Hytale Update</h2>
+                <p className="page__hint">
+                  Update verfügbar. Installiert: {updateModal.installed ?? '—'} → Verfügbar:{' '}
+                  {updateModal.latest ?? '—'}. Jetzt updaten?
+                </p>
+              </div>
+              <button className="btn btn--ghost" onClick={() => setUpdateModal(null)}>
+                Abbrechen
+              </button>
+            </div>
+            <div className="modal__actions">
+              <button className="btn btn--ghost" onClick={() => setUpdateModal(null)}>
+                Abbrechen
+              </button>
+              <button className="btn" onClick={handleConfirmUpdate}>
+                Updaten
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isCreateOpen ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setIsCreateOpen(false)}>
