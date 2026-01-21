@@ -1,4 +1,4 @@
-import { promises as fs, type SymlinkType } from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import extract from 'extract-zip';
 import { InstanceManager } from '../core/InstanceManager';
@@ -63,9 +63,12 @@ const writeVersionFiles = async (serverDir: string, versionDir: string, version:
   await fs.writeFile(path.join(versionDir, 'version.txt'), `${version}\n`, 'utf-8');
 };
 
+type SymlinkHint = 'file' | 'dir' | 'junction';
+
 const createSymlink = async (target: string, linkPath: string) => {
   await fs.rm(linkPath, { recursive: true, force: true });
-  const type: SymlinkType | undefined = process.platform === 'win32' ? 'junction' : undefined;
+  // Node's SymlinkType type is not exported in older @types/node, so we use string literals.
+  const type: SymlinkHint | undefined = process.platform === 'win32' ? 'junction' : undefined;
   await fs.symlink(target, linkPath, type);
 };
 

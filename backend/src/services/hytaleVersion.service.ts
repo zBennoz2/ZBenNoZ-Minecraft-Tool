@@ -17,6 +17,18 @@ export interface HytaleReleaseInfo {
   sha256?: string;
 }
 
+export interface HytaleManifestServer {
+  url?: string;
+  sha256?: string;
+}
+
+export interface HytaleManifestPayload {
+  latest: string;
+  server?: HytaleManifestServer;
+  releases?: unknown;
+  versions?: unknown;
+}
+
 export interface HytaleReleaseManifest {
   latest: string;
   releases: HytaleReleaseInfo[];
@@ -39,6 +51,18 @@ const instanceManager = new InstanceManager();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+export const isHytaleManifest = (value: unknown): value is HytaleManifestPayload => {
+  if (!isRecord(value) || typeof value.latest !== 'string') {
+    return false;
+  }
+  if (!('server' in value)) {
+    return true;
+  }
+  return isRecord(value.server);
+};
+
+const isHytaleManifestServer = (value: unknown): value is HytaleManifestServer => isRecord(value);
 
 export const parseSemver = (value: string): ParsedSemver | null => {
   if (!value) return null;
@@ -76,8 +100,9 @@ export const normalizeSemver = (value: string | null | undefined): string | null
 };
 
 export const parseHytaleReleaseManifest = (payload: unknown): HytaleReleaseManifest => {
-  if (!isRecord(payload)) {
-    throw new Error('Release manifest must be a JSON object.');
+  // Validate the base manifest shape to avoid unsafe property access on unknown JSON.
+  if (!isHytaleManifest(payload)) {
+    throw new Error('Release manifest must be a JSON object with a latest version.');
   }
 
   const latestRaw = payload.latest;
@@ -101,7 +126,11 @@ export const parseHytaleReleaseManifest = (payload: unknown): HytaleReleaseManif
       throw new Error('Release manifest entry version is missing or invalid.');
     }
 
-    const server = isRecord(entry.server) ? entry.server : entry.downloads;
+    const server = isHytaleManifestServer(entry.server)
+      ? entry.server
+      : isHytaleManifestServer(entry.downloads)
+        ? entry.downloads
+        : undefined;
     const serverUrl = typeof server?.url === 'string' ? server.url.trim() : '';
     if (!serverUrl) {
       throw new Error(`Release ${normalizedVersion} is missing a server.url value.`);
