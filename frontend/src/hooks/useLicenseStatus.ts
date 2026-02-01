@@ -18,6 +18,20 @@ export function useLicenseStatus() {
   const [authState, setAuthState] = useState<AuthState>({ state: 'checking', authenticated: false })
   const intervalRef = useRef<number | null>(null)
 
+  const normalizeMessage = useCallback(
+    (value: unknown) => (typeof value === 'string' && value.trim().length > 0 ? value : undefined),
+    [],
+  )
+
+  const buildUnauthenticatedStatus = useCallback(
+    (message?: string): LicenseStatus => ({
+      active: false,
+      status: 'unauthenticated',
+      message: normalizeMessage(message) ?? null,
+    }),
+    [normalizeMessage],
+  )
+
   const clearTimer = () => {
     if (intervalRef.current) {
       window.clearInterval(intervalRef.current)
@@ -27,48 +41,104 @@ export function useLicenseStatus() {
 
   const refreshLicense = useCallback(
     async (force = false) => {
+      const tokens = getStoredTokens()
+      if (!tokens?.accessToken) {
+        // eslint-disable-next-line no-console
+        console.info('[auth] License check skipped: no access token')
+        setAuthState({
+          state: 'ready',
+          authenticated: false,
+          license: buildUnauthenticatedStatus('Bitte anmelden, um die Lizenz zu prüfen.'),
+          tokens: null,
+        })
+        return undefined
+      }
       try {
         const status = await getLicenseStatus(force)
-        const tokens = getStoredTokens()
         setAuthState((prev) => ({
           ...prev,
           state: 'ready',
-          license: status,
+          license: {
+            ...status,
+            message: normalizeMessage(status.message) ?? null,
+          },
           message: undefined,
           authenticated: status.status !== 'unauthenticated' && Boolean(tokens?.accessToken || prev.authenticated),
           tokens,
         }))
         return status
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Lizenzstatus konnte nicht geladen werden'
-        setAuthState((prev) => ({ ...prev, state: 'error', message, tokens: getStoredTokens() }))
+        const errorMessage = error instanceof Error ? error.message : 'Lizenzstatus konnte nicht geladen werden'
+        if (errorMessage.includes('TOKEN_MISSING')) {
+          // eslint-disable-next-line no-console
+          console.info('[auth] License check skipped: token missing')
+          setAuthState({
+            state: 'ready',
+            authenticated: false,
+            license: buildUnauthenticatedStatus('Bitte anmelden, um die Lizenz zu prüfen.'),
+            tokens: null,
+          })
+          return undefined
+        }
+        setAuthState((prev) => ({ ...prev, state: 'error', message: errorMessage, tokens: getStoredTokens() }))
         return undefined
       }
     },
-    [],
+    [buildUnauthenticatedStatus, normalizeMessage],
   )
 
-  const loadSession = useCallback(async () => {
+  const loadSession = useCallback(async (tokensOverride?: StoredAuthTokens | null) => {
     try {
       const session = await getSession()
       const name = session.user?.name || session.user?.email
-      const tokens = getStoredTokens()
+      const tokens = tokensOverride ?? getStoredTokens()
       setAuthState({
         state: 'ready',
-        authenticated: session.authenticated,
-        license: session.license ?? undefined,
+        authenticated: session.authenticated && Boolean(tokens?.accessToken),
+        license: session.license
+          ? { ...session.license, message: normalizeMessage(session.license.message) ?? null }
+          : undefined,
         userName: name,
         tokens,
       })
+      return session
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Session konnte nicht geladen werden'
       setAuthState({ state: 'error', authenticated: false, message, tokens: getStoredTokens() })
+      return null
     }
-  }, [])
+  }, [normalizeMessage])
 
   useEffect(() => {
-    void loadSession()
-  }, [loadSession])
+    const tokens = getStoredTokens()
+    if (!tokens?.accessToken) {
+      // eslint-disable-next-line no-console
+      console.info('[auth] Boot: no access token found')
+      setAuthState({
+        state: 'ready',
+        authenticated: false,
+        license: buildUnauthenticatedStatus('Bitte anmelden, um die Lizenz zu prüfen.'),
+        tokens: null,
+      })
+      return
+    }
+
+    // eslint-disable-next-line no-console
+    console.info('[auth] Boot: access token found, loading session')
+    const runBoot = async () => {
+      const session = await loadSession(tokens)
+      if (!session?.authenticated) {
+        // eslint-disable-next-line no-console
+        console.info('[auth] Boot: session unauthenticated, skipping license check')
+        return
+      }
+      // eslint-disable-next-line no-console
+      console.info('[auth] Boot: triggering license check')
+      await refreshLicense(true)
+    }
+
+    void runBoot()
+  }, [buildUnauthenticatedStatus, loadSession, refreshLicense])
 
   useEffect(() => {
     clearTimer()
@@ -87,8 +157,14 @@ export function useLicenseStatus() {
       setAuthState((prev) => ({ ...prev, state: 'error', message, authenticated: false }))
       return result
     }
-    await loadSession()
-    await refreshLicense(true)
+    const tokens = getStoredTokens()
+    const session = await loadSession(tokens)
+    if (tokens?.accessToken && session?.authenticated) {
+      await refreshLicense(true)
+    } else {
+      // eslint-disable-next-line no-console
+      console.info('[auth] Login completed without stored token, skipping license check')
+    }
     setAuthState((prev) => ({ ...prev, tokens: getStoredTokens() }))
     return result
   }, [loadSession, refreshLicense])
@@ -96,7 +172,12 @@ export function useLicenseStatus() {
   const logout = useCallback(async () => {
     await logoutRequest()
     clearTimer()
-    setAuthState({ state: 'ready', authenticated: false, tokens: null })
+    setAuthState({
+      state: 'ready',
+      authenticated: false,
+      tokens: null,
+      license: buildUnauthenticatedStatus('Bitte anmelden, um die Lizenz zu prüfen.'),
+    })
   }, [])
 
   const statusLabel = useMemo(() => authState.license?.status ?? 'unauthenticated', [authState.license?.status])

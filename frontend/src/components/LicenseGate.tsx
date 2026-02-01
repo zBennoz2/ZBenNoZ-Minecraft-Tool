@@ -32,6 +32,7 @@ export function LicenseGate({ children }: Props) {
   const [success, setSuccess] = useState<string | null>(null)
 
   const statusLabel = useMemo(() => friendlyStatus(authState.license?.status), [authState.license?.status])
+  const resolveHint = (value?: unknown) => (typeof value === 'string' && value.trim() ? value : undefined)
 
   useEffect(() => {
     if (authState.license?.active && authState.license?.status === 'active') {
@@ -79,7 +80,10 @@ export function LicenseGate({ children }: Props) {
   }
 
   const isLoading = authState.state === 'checking'
-  const statusHint = authState.license?.message ?? authState.message ?? 'Bitte anmelden, um die Lizenz zu prüfen.'
+  const statusHint =
+    resolveHint(authState.license?.message) ??
+    resolveHint(authState.message) ??
+    'Bitte anmelden, um die Lizenz zu prüfen.'
   const isAuthenticated = authState.authenticated
   const isLocked = isAuthenticated && authState.license?.status && authState.license?.status !== 'active' && authState.license?.status !== 'grace'
 

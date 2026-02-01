@@ -3,7 +3,7 @@ import path from 'path'
 import { authConfig } from '../config/auth'
 import { getDataDir } from '../config/paths'
 import { getDeviceInfo } from './device.service'
-import { getValidAccessToken, logout } from './auth.service'
+import { getValidAccessToken, logout, registerDevice } from './auth.service'
 
 type LicenseStatus = {
   active: boolean
@@ -216,6 +216,25 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
     lastCheckedAt = Date.now()
     writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined })
     return status
+  }
+
+  const deviceResult = await registerDevice(tokenResult.token)
+  if (!deviceResult.ok) {
+    if (deviceResult.error === 'TOKEN_MISSING' || deviceResult.status === 401) {
+      await logout()
+      const status = buildStatus(
+        { active: false, reason: 'not_authenticated', message: deviceResult.message },
+        { status: 'unauthenticated', active: false, grace_until: getGraceUntil() },
+      )
+      lastStatus = status
+      lastCheckedAt = Date.now()
+      writeCache({
+        status,
+        checkedAt: new Date().toISOString(),
+        lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined,
+      })
+      return status
+    }
   }
 
   const device = getDeviceInfo()
