@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { SUPPORT_WEBSITE } from '../config'
 import useLicenseStatus from '../hooks/useLicenseStatus'
 
@@ -22,6 +23,7 @@ type Props = { children: React.ReactNode }
 
 export function LicenseGate({ children }: Props) {
   const { authState, refreshLicense, login, logout } = useLicenseStatus()
+  const navigate = useNavigate()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
@@ -30,6 +32,12 @@ export function LicenseGate({ children }: Props) {
   const [success, setSuccess] = useState<string | null>(null)
 
   const statusLabel = useMemo(() => friendlyStatus(authState.license?.status), [authState.license?.status])
+
+  useEffect(() => {
+    if (authState.license?.active && authState.license?.status === 'active') {
+      navigate('/', { replace: true })
+    }
+  }, [authState.license?.active, authState.license?.status, navigate])
 
   const handleLogin = async () => {
     setBusy(true)

@@ -1,4 +1,5 @@
 import { API_KEY, apiUrl } from './config'
+import { clearStoredTokens, getAccessToken, refreshAccessToken } from './api/authTokens'
 
 export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge' | 'hytale'
 export type LoaderType = 'fabric' | 'forge' | 'neoforge'
@@ -284,18 +285,29 @@ const sortVersionsDesc = (versions: string[]) =>
     .slice()
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
 
-export async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> {
+type FetchApiOptions = RequestInit & { retryAuth?: boolean }
+
+export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): Promise<T> {
   const url = apiUrl(path)
+  const method = options.method || 'GET'
+  const { retryAuth, ...requestOptions } = options
+  const headers = new Headers(requestOptions.headers || {})
+  const existingAuth = headers.has('Authorization')
+  const accessToken = getAccessToken()
+  if (!existingAuth && accessToken) {
+    headers.set('Authorization', `Bearer ${accessToken}`)
+  }
+
   // eslint-disable-next-line no-console
-  console.log('[api] Requesting', url)
+  console.debug('[api] Requesting', url, { method, hasAuth: headers.has('Authorization') })
 
   const response = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
       ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),
-      ...options.headers,
+      ...Object.fromEntries(headers.entries()),
     },
-    ...options,
+    ...requestOptions,
   })
 
   let payload: unknown
@@ -305,17 +317,52 @@ export async function fetchApi<T>(path: string, options: RequestInit = {}): Prom
     payload = undefined
   }
 
-  if (!response.ok) {
-    const hasErrorField =
-      typeof payload === 'object' && payload !== null && 'error' in payload
-    const hasMessageField =
-      typeof payload === 'object' && payload !== null && 'message' in payload
+  const errorCode =
+    typeof payload === 'object' && payload !== null && 'error_code' in payload
+      ? String((payload as { error_code?: unknown }).error_code ?? '')
+      : undefined
 
-    const errorMessage = hasErrorField
-      ? String((payload as { error?: unknown }).error ?? 'Unknown error')
-      : hasMessageField
-        ? String((payload as { message?: unknown }).message ?? 'Unknown error')
-        : `Request failed with status ${response.status}`
+  // eslint-disable-next-line no-console
+  console.debug('[api] Response', url, {
+    method,
+    status: response.status,
+    hasAuth: headers.has('Authorization'),
+    errorCode: errorCode || undefined,
+  })
+
+  const shouldRefresh =
+    !response.ok &&
+    path !== '/api/auth/refresh' &&
+    !retryAuth &&
+    (response.status === 401 || errorCode === 'TOKEN_EXPIRED' || errorCode === 'TOKEN_INVALID')
+
+  if (shouldRefresh) {
+    const refreshResult = await refreshAccessToken()
+    if (refreshResult.ok) {
+      const retryHeaders = new Headers(headers)
+      retryHeaders.set('Authorization', `Bearer ${refreshResult.tokens.accessToken}`)
+      // eslint-disable-next-line no-console
+      console.debug('[api] Retrying after refresh', url, { method })
+      return fetchApi<T>(path, {
+        ...requestOptions,
+        retryAuth: true,
+        headers: Object.fromEntries(retryHeaders.entries()),
+      })
+    }
+    clearStoredTokens()
+  }
+
+  if (!response.ok) {
+    const payloadObject = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : null
+    const messageCandidate = payloadObject?.message
+    const errorCandidate = payloadObject?.error
+
+    const errorMessage =
+      typeof messageCandidate === 'string' && messageCandidate.trim()
+        ? messageCandidate
+        : typeof errorCandidate === 'string' && errorCandidate.trim()
+          ? errorCandidate
+          : `Request failed with status ${response.status}`
 
     throw new Error(errorMessage)
   }

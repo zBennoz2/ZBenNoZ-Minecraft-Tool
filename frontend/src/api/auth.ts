@@ -1,4 +1,5 @@
 import { fetchApi } from '../api'
+import { clearStoredTokens, saveTokensFromLoginResponse } from './authTokens'
 import type { LicenseStatus } from './license'
 
 export type AuthUser = {
@@ -29,17 +30,36 @@ export type LoginResult = {
   devices_used?: number
 }
 
+type LoginTokenResponse = {
+  access_token: string
+  refresh_token: string
+  expires_in?: number
+  refresh_expires_in?: number
+  user?: AuthUser
+  message?: string
+}
+
+type LoginResponse = LoginResult | LoginTokenResponse
+
 export async function getSession(): Promise<AuthSession> {
   return fetchApi<AuthSession>('/api/auth/session', { cache: 'no-store' })
 }
 
 export async function login(identifier: string, password: string, remember: boolean): Promise<LoginResult> {
-  return fetchApi<LoginResult>('/api/auth/login', {
+  const result = await fetchApi<LoginResponse>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ identifier, password, remember }),
   })
+
+  if ('access_token' in result && result.access_token && result.refresh_token) {
+    saveTokensFromLoginResponse(result, remember)
+    return { ok: true, user: result.user, message: result.message }
+  }
+
+  return result
 }
 
 export async function logout(): Promise<void> {
   await fetchApi('/api/auth/logout', { method: 'POST' })
+  clearStoredTokens()
 }

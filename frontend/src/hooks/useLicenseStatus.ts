@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getSession, login as loginRequest, logout as logoutRequest } from '../api/auth'
+import { getStoredTokens, type StoredAuthTokens } from '../api/authTokens'
 import { getLicenseStatus, type LicenseStatus } from '../api/license'
 
 export type AuthState = {
@@ -8,6 +9,7 @@ export type AuthState = {
   authenticated: boolean
   userName?: string
   message?: string
+  tokens?: StoredAuthTokens | null
 }
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
@@ -27,11 +29,19 @@ export function useLicenseStatus() {
     async (force = false) => {
       try {
         const status = await getLicenseStatus(force)
-        setAuthState((prev) => ({ ...prev, state: 'ready', license: status, message: undefined }))
+        const tokens = getStoredTokens()
+        setAuthState((prev) => ({
+          ...prev,
+          state: 'ready',
+          license: status,
+          message: undefined,
+          authenticated: status.status !== 'unauthenticated' && Boolean(tokens?.accessToken || prev.authenticated),
+          tokens,
+        }))
         return status
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Lizenzstatus konnte nicht geladen werden'
-        setAuthState((prev) => ({ ...prev, state: 'error', message }))
+        setAuthState((prev) => ({ ...prev, state: 'error', message, tokens: getStoredTokens() }))
         return undefined
       }
     },
@@ -42,15 +52,17 @@ export function useLicenseStatus() {
     try {
       const session = await getSession()
       const name = session.user?.name || session.user?.email
+      const tokens = getStoredTokens()
       setAuthState({
         state: 'ready',
         authenticated: session.authenticated,
         license: session.license ?? undefined,
         userName: name,
+        tokens,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Session konnte nicht geladen werden'
-      setAuthState({ state: 'error', authenticated: false, message })
+      setAuthState({ state: 'error', authenticated: false, message, tokens: getStoredTokens() })
     }
   }, [])
 
@@ -77,13 +89,14 @@ export function useLicenseStatus() {
     }
     await loadSession()
     await refreshLicense(true)
+    setAuthState((prev) => ({ ...prev, tokens: getStoredTokens() }))
     return result
   }, [loadSession, refreshLicense])
 
   const logout = useCallback(async () => {
     await logoutRequest()
     clearTimer()
-    setAuthState({ state: 'ready', authenticated: false })
+    setAuthState({ state: 'ready', authenticated: false, tokens: null })
   }, [])
 
   const statusLabel = useMemo(() => authState.license?.status ?? 'unauthenticated', [authState.license?.status])
