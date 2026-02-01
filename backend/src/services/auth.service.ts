@@ -36,6 +36,26 @@ type RemoteError = {
   devices_used?: number
 }
 
+type LoginFailure = {
+  ok: false
+  message?: string
+  error?: string
+  status?: number
+  device_limit?: number
+  devices_used?: number
+}
+
+type LoginSuccess = {
+  ok: true
+  user?: {
+    id?: string
+    email?: string
+    name?: string
+  }
+}
+
+export type LoginResult = LoginFailure | LoginSuccess
+
 const authUrl = (path: string) => `${authConfig.baseUrl}${path.startsWith('/') ? path : `/${path}`}`
 
 const fetchJson = async <T>(url: string, options: RequestInit = {}) => {
@@ -68,7 +88,7 @@ export const getSession = async () => {
   }
 }
 
-export const login = async (payload: LoginPayload) => {
+export const login = async (payload: LoginPayload): Promise<LoginResult> => {
   const { identifier, password, remember } = payload
   if (!identifier || !password) {
     return { ok: false as const, message: 'Login-Daten fehlen.' }

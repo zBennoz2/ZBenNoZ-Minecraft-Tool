@@ -44,6 +44,9 @@ type RemoteError = {
   devices_used?: number
 }
 
+const LICENSE_STATUS_VALUES = ['active', 'inactive', 'grace', 'offline', 'unauthenticated'] as const
+type LicenseStatusValue = (typeof LICENSE_STATUS_VALUES)[number]
+
 const CACHE_FILE = path.join(getDataDir(), 'license.status.json')
 
 let lastCheckedAt: number | null = null
@@ -55,11 +58,42 @@ let nextAllowedAt = 0
 const licenseUrl = (pathSuffix: string) =>
   `${authConfig.baseUrl}${pathSuffix.startsWith('/') ? pathSuffix : `/${pathSuffix}`}`
 
+const normalizeStatusValue = (value: unknown): LicenseStatus['status'] => {
+  if (typeof value === 'string' && LICENSE_STATUS_VALUES.includes(value as LicenseStatusValue)) {
+    return value as LicenseStatusValue
+  }
+  return 'inactive'
+}
+
+const normalizeLicenseStatus = (value: Partial<LicenseStatus> | null | undefined): LicenseStatus => {
+  const active = Boolean(value?.active)
+  const fallbackStatus = active ? 'active' : 'inactive'
+  return {
+    active,
+    status: normalizeStatusValue(value?.status ?? fallbackStatus),
+    reason: value?.reason,
+    plan: value?.plan ?? null,
+    expires_at: value?.expires_at ?? null,
+    server_time: value?.server_time ?? null,
+    grace_until: value?.grace_until ?? null,
+    device_limit: value?.device_limit ?? null,
+    devices_used: value?.devices_used ?? null,
+    message: value?.message ?? null,
+    checked_at: value?.checked_at ?? new Date().toISOString(),
+  }
+}
+
 const readCache = (): CacheFile | null => {
   try {
     if (!fs.existsSync(CACHE_FILE)) return null
     const raw = fs.readFileSync(CACHE_FILE, 'utf-8')
-    return JSON.parse(raw) as CacheFile
+    const parsed = JSON.parse(raw) as Partial<CacheFile>
+    if (!parsed || !parsed.status || !parsed.checkedAt) return null
+    return {
+      status: normalizeLicenseStatus(parsed.status),
+      checkedAt: parsed.checkedAt,
+      lastSuccessAt: parsed.lastSuccessAt,
+    }
   } catch (error) {
     return null
   }
@@ -120,20 +154,26 @@ const fetchJson = async <T>(url: string, options: RequestInit = {}) => {
   }
 }
 
-const buildStatus = (payload: LicenseStatusPayload, override?: Partial<LicenseStatus>): LicenseStatus => ({
-  active: Boolean(payload.active),
-  status: payload.active ? 'active' : 'inactive',
-  reason: payload.reason,
-  plan: payload.plan ?? null,
-  expires_at: payload.expires_at ?? null,
-  server_time: payload.server_time ?? null,
-  grace_until: payload.grace_until ?? null,
-  device_limit: payload.device_limit ?? null,
-  devices_used: payload.devices_used ?? null,
-  message: payload.message ?? null,
-  checked_at: new Date().toISOString(),
-  ...override,
-})
+const buildStatus = (payload: LicenseStatusPayload, override?: Partial<LicenseStatus>): LicenseStatus => {
+  const active = Boolean(override?.active ?? payload.active)
+  const baseStatus = active ? 'active' : 'inactive'
+  return normalizeLicenseStatus({
+    active,
+    status: override?.status ?? baseStatus,
+    reason: override?.reason ?? payload.reason,
+    plan: override?.plan ?? payload.plan ?? null,
+    expires_at: override?.expires_at ?? payload.expires_at ?? null,
+    server_time: override?.server_time ?? payload.server_time ?? null,
+    grace_until: override?.grace_until ?? payload.grace_until ?? null,
+    device_limit: override?.device_limit ?? payload.device_limit ?? null,
+    devices_used: override?.devices_used ?? payload.devices_used ?? null,
+    message: override?.message ?? payload.message ?? null,
+    checked_at: override?.checked_at ?? new Date().toISOString(),
+  })
+}
+
+const applyStatusOverride = (base: LicenseStatus, override: Partial<LicenseStatus> & { status: LicenseStatus['status'] }) =>
+  normalizeLicenseStatus({ ...base, ...override })
 
 export const getCachedLicenseStatus = (): LicenseStatus | null => {
   if (lastStatus) return lastStatus
@@ -210,7 +250,7 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
     const retryAfter = Number(response.headers.get('Retry-After'))
     applyBackoff(Number.isFinite(retryAfter) ? retryAfter : undefined)
     if (authConfig.graceMode === 'grace' && inGraceWindow() && lastStatus) {
-      const status = { ...lastStatus, status: 'grace', reason: 'rate_limited', grace_until: getGraceUntil() }
+      const status = applyStatusOverride(lastStatus, { status: 'grace', reason: 'rate_limited', grace_until: getGraceUntil() })
       lastStatus = status
       writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: new Date(lastSuccessAt ?? Date.now()).toISOString() })
       return status
@@ -221,7 +261,7 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
   if (!response.ok) {
     applyBackoff()
     if (authConfig.graceMode === 'grace' && inGraceWindow() && lastStatus) {
-      const status = { ...lastStatus, status: 'grace', reason: 'offline', grace_until: getGraceUntil() }
+      const status = applyStatusOverride(lastStatus, { status: 'grace', reason: 'offline', grace_until: getGraceUntil() })
       lastStatus = status
       writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: new Date(lastSuccessAt ?? Date.now()).toISOString() })
       return status
