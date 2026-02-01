@@ -8,29 +8,29 @@ import BackButton from '../components/BackButton'
 const APP_VERSION = packageJson.version ?? '—'
 
 export function AboutSupport() {
-  const { licenseState, refresh } = useLicenseStatus()
-  const [license, setLicense] = useState<LicenseStatus | undefined>(licenseState.status)
+  const { authState, refreshLicense } = useLicenseStatus()
+  const [license, setLicense] = useState<LicenseStatus | undefined>(authState.license)
   const year = useMemo(() => new Date().getFullYear(), [])
 
   useEffect(() => {
-    if (licenseState.state === 'ready') {
-      setLicense(licenseState.status)
+    if (authState.state === 'ready') {
+      setLicense(authState.license)
     }
-  }, [licenseState.state, licenseState.status])
+  }, [authState.state, authState.license])
 
   const licenseStatusLabel = useMemo(() => {
     switch (license?.status) {
       case 'active':
         return 'Aktiv'
-      case 'expired':
-        return 'Abgelaufen'
-      case 'device_mismatch':
-        return 'Gerät nicht freigeschaltet'
-      case 'invalid':
-        return 'Ungültig'
-      case 'missing':
+      case 'grace':
+        return 'Grace-Period'
+      case 'offline':
+        return 'Offline'
+      case 'unauthenticated':
+        return 'Abgemeldet'
+      case 'inactive':
       default:
-        return 'Fehlt'
+        return 'Inaktiv'
     }
   }, [license?.status])
 
@@ -64,38 +64,38 @@ export function AboutSupport() {
         <div className="page__header">
           <div>
             <h2>Lizenzstatus</h2>
-            <p className="page__hint">Kostenlose Lizenz, offline gültig. Gerätebindung aktiviert.</p>
+            <p className="page__hint">Lizenzstatus vom Login-System der Webseite.</p>
           </div>
           <span className="badge">{licenseStatusLabel}</span>
         </div>
         <div className="license-grid">
           <div>
-            <div className="label">License ID</div>
-            <div className="value">{license?.licenseId ?? '—'}</div>
+            <div className="label">Plan</div>
+            <div className="value">{license?.plan ?? '—'}</div>
           </div>
           <div>
-            <div className="label">Edition</div>
-            <div className="value">{license?.edition ?? 'free'}</div>
+            <div className="label">Aktiv</div>
+            <div className="value">{license?.active ? 'Ja' : 'Nein'}</div>
           </div>
           <div>
-            <div className="label">Besitzer</div>
-            <div className="value">{license?.owner ?? '—'}</div>
+            <div className="label">Grund</div>
+            <div className="value">{license?.reason ?? '—'}</div>
           </div>
           <div>
             <div className="label">Gültig bis</div>
-            <div className="value">{license?.expiresAt ? new Date(license.expiresAt).toLocaleString() : 'kein Ablauf'}</div>
+            <div className="value">{license?.expires_at ? new Date(license.expires_at).toLocaleString() : '—'}</div>
           </div>
           <div>
-            <div className="label">Gerätebindung</div>
-            <div className="value">{license?.deviceBinding === 'none' ? 'Keine' : 'Erforderlich'}</div>
+            <div className="label">Geräte (aktiv)</div>
+            <div className="value">{license?.devices_used ?? '—'}</div>
           </div>
           <div>
-            <div className="label">Max. Geräte</div>
-            <div className="value">{license?.maxDevices ?? '—'}</div>
+            <div className="label">Geräte-Limit</div>
+            <div className="value">{license?.device_limit ?? '—'}</div>
           </div>
         </div>
         <div className="license-actions">
-          <button className="btn" onClick={refresh}>Status aktualisieren</button>
+          <button className="btn" onClick={() => refreshLicense(true)}>Status aktualisieren</button>
         </div>
       </div>
 

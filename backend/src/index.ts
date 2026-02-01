@@ -18,6 +18,7 @@ import { sleepService } from './services/sleep.service';
 import backupsRouter from './api/backups';
 import { pingWakeService } from './services/pingWake.service';
 import playersRouter from './api/players';
+import authRouter from './api/auth';
 import licenseRouter, { licenseGuardMiddleware } from './api/license';
 import systemRouter from './api/system';
 import hytaleRouter from './api/hytale';
@@ -144,6 +145,7 @@ const apiRouter = express.Router();
 apiRouter.options('*', cors(corsOptionsDelegate));
 apiRouter.use(cors(corsOptionsDelegate));
 
+apiRouter.use('/auth', authRouter);
 apiRouter.use('/license', licenseRouter);
 
 apiRouter.use((req, res, next) => {
@@ -153,6 +155,9 @@ apiRouter.use((req, res, next) => {
   }
 
   if (req.path.startsWith('/license')) {
+    return next();
+  }
+  if (req.path.startsWith('/auth')) {
     return next();
   }
 
