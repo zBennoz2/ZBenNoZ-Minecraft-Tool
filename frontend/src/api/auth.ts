@@ -1,5 +1,4 @@
 import { fetchApi } from '../api'
-import { clearStoredTokens, saveTokensFromLoginResponse } from './authTokens'
 import type { LicenseStatus } from './license'
 
 export type AuthUser = {
@@ -31,38 +30,35 @@ export type LoginResult = {
   devices_used?: number
 }
 
-type LoginTokenResponse = {
-  access_token: string
-  refresh_token: string
-  expires_in?: number
-  refresh_expires_in?: number
-  user?: AuthUser
-  message?: string
-}
-
 type LoginErrorResponse = {
-  error_code?: string
-  message?: string
+  error: string
+  message: string
   device_limit?: number
   devices_used?: number
-  user?: AuthUser
 }
 
-type LoginResponse = LoginTokenResponse | LoginErrorResponse
+type LoginSuccessResponse = {
+  ok: true
+  user?: AuthUser
+  message?: string
+}
+
+type LoginResponse = LoginSuccessResponse | LoginErrorResponse
+
+const isLoginErrorResponse = (response: LoginResponse): response is LoginErrorResponse => 'error' in response
 
 const mapLoginResponseToResult = (response: LoginResponse): LoginResult => {
-  if ('access_token' in response && response.access_token && response.refresh_token) {
-    return { ok: true, user: response.user, message: response.message }
+  if (isLoginErrorResponse(response)) {
+    return {
+      ok: false,
+      message: response.message,
+      error_code: response.error,
+      device_limit: response.device_limit,
+      devices_used: response.devices_used,
+    }
   }
 
-  return {
-    ok: false,
-    user: response.user,
-    message: response.message,
-    error_code: response.error_code,
-    device_limit: response.device_limit,
-    devices_used: response.devices_used,
-  }
+  return { ok: true, user: response.user, message: response.message }
 }
 
 export async function getSession(): Promise<AuthSession> {
@@ -75,15 +71,9 @@ export async function login(identifier: string, password: string, remember: bool
     body: JSON.stringify({ identifier, password, remember }),
   })
 
-  if ('access_token' in result && result.access_token && result.refresh_token) {
-    saveTokensFromLoginResponse(result, remember)
-    return mapLoginResponseToResult(result)
-  }
-
   return mapLoginResponseToResult(result)
 }
 
 export async function logout(): Promise<void> {
   await fetchApi('/api/auth/logout', { method: 'POST' })
-  clearStoredTokens()
 }

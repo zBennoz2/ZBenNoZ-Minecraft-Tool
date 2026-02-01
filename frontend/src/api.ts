@@ -1,5 +1,4 @@
 import { API_KEY, apiUrl } from './config'
-import { clearStoredTokens, getAccessToken, refreshAccessToken } from './api/authTokens'
 
 export type ServerType = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge' | 'hytale'
 export type LoaderType = 'fabric' | 'forge' | 'neoforge'
@@ -285,18 +284,13 @@ const sortVersionsDesc = (versions: string[]) =>
     .slice()
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }))
 
-type FetchApiOptions = RequestInit & { retryAuth?: boolean }
+type FetchApiOptions = RequestInit
 
 export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): Promise<T> {
   const url = apiUrl(path)
   const method = options.method || 'GET'
-  const { retryAuth, ...requestOptions } = options
+  const requestOptions = options
   const headers = new Headers(requestOptions.headers || {})
-  const existingAuth = headers.has('Authorization')
-  const accessToken = getAccessToken()
-  if (!existingAuth && accessToken) {
-    headers.set('Authorization', `Bearer ${accessToken}`)
-  }
 
   // eslint-disable-next-line no-console
   console.debug('[api] Requesting', url, { method, hasAuth: headers.has('Authorization') })
@@ -329,28 +323,6 @@ export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): 
     hasAuth: headers.has('Authorization'),
     errorCode: errorCode || undefined,
   })
-
-  const shouldRefresh =
-    !response.ok &&
-    path !== '/api/auth/refresh' &&
-    !retryAuth &&
-    (response.status === 401 || errorCode === 'TOKEN_EXPIRED' || errorCode === 'TOKEN_INVALID')
-
-  if (shouldRefresh) {
-    const refreshResult = await refreshAccessToken()
-    if (refreshResult.ok) {
-      const retryHeaders = new Headers(headers)
-      retryHeaders.set('Authorization', `Bearer ${refreshResult.tokens.accessToken}`)
-      // eslint-disable-next-line no-console
-      console.debug('[api] Retrying after refresh', url, { method })
-      return fetchApi<T>(path, {
-        ...requestOptions,
-        retryAuth: true,
-        headers: Object.fromEntries(retryHeaders.entries()),
-      })
-    }
-    clearStoredTokens()
-  }
 
   if (!response.ok) {
     const payloadObject = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : null

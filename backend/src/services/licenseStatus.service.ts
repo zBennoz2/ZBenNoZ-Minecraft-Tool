@@ -208,6 +208,8 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
 
   const tokenResult = await getValidAccessToken()
   if (!tokenResult.ok) {
+    // eslint-disable-next-line no-console
+    console.info('[auth] License check token present: no')
     const status = buildStatus(
       { active: false, reason: 'not_authenticated' },
       { status: 'unauthenticated', active: false, grace_until: getGraceUntil() },
@@ -218,6 +220,8 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
     return status
   }
 
+  // eslint-disable-next-line no-console
+  console.info('[auth] License check token present: yes')
   const deviceResult = await registerDevice(tokenResult.token)
   if (!deviceResult.ok) {
     if (deviceResult.error === 'TOKEN_MISSING' || deviceResult.status === 401) {

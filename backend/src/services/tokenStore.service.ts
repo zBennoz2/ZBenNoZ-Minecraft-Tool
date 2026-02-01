@@ -23,6 +23,7 @@ const SERVICE_NAME = 'minecraft-amp'
 const ACCOUNT_NAME = 'auth-session'
 const TOKEN_FILE = path.join(getDataDir(), 'auth.tokens.enc')
 const TOKEN_SALT_FILE = path.join(getDataDir(), 'auth.tokens.salt')
+const STORAGE_KEY = `${SERVICE_NAME}/${ACCOUNT_NAME}`
 
 let cachedTokens: StoredTokens | null = null
 let volatileTokens: StoredTokens | null = null
@@ -150,12 +151,16 @@ export const getStoredTokens = async (): Promise<StoredTokens | null> => {
   const keytarTokens = await readFromKeytar()
   if (keytarTokens) {
     cachedTokens = keytarTokens
+    // eslint-disable-next-line no-console
+    console.info('[auth] Token loaded: yes (secure store)', { key: STORAGE_KEY })
     return keytarTokens
   }
 
   const fileTokens = readFromFile()
   if (fileTokens) {
     cachedTokens = fileTokens
+    // eslint-disable-next-line no-console
+    console.info('[auth] Token loaded: yes (encrypted file fallback)', { path: TOKEN_FILE, key: STORAGE_KEY })
     return fileTokens
   }
 
@@ -164,20 +169,18 @@ export const getStoredTokens = async (): Promise<StoredTokens | null> => {
 
 export const saveStoredTokens = async (tokens: StoredTokens, persist: boolean) => {
   cachedTokens = tokens
-  if (!persist) {
-    volatileTokens = tokens
-    await removeFromKeytar()
+  volatileTokens = null
+  const storedInKeytar = await writeToKeytar(tokens)
+  if (storedInKeytar) {
     removeFromFile()
+    // eslint-disable-next-line no-console
+    console.info('[auth] Token stored: yes (secure store)', { key: STORAGE_KEY })
     return
   }
 
-  volatileTokens = null
-  const storedInKeytar = await writeToKeytar(tokens)
-  if (!storedInKeytar) {
-    writeToFile(tokens)
-  } else {
-    removeFromFile()
-  }
+  writeToFile(tokens)
+  // eslint-disable-next-line no-console
+  console.info('[auth] Token stored: yes (encrypted file fallback)', { path: TOKEN_FILE, key: STORAGE_KEY, persist })
 }
 
 export const clearStoredTokens = async () => {

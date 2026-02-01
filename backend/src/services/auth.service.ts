@@ -79,8 +79,12 @@ export const getSession = async () => {
   const tokens = await getStoredTokens()
   const device = getDeviceInfo()
   if (!tokens) {
+    // eslint-disable-next-line no-console
+    console.info('[auth] Session token present: no')
     return { authenticated: false, device }
   }
+  // eslint-disable-next-line no-console
+  console.info('[auth] Session token present: yes')
   return {
     authenticated: true,
     user: tokens.user,
@@ -114,6 +118,19 @@ export const login = async (payload: LoginPayload): Promise<LoginResult> => {
   }
 
   const loginData = data as LoginResponse
+  const hasAccessToken = typeof loginData.access_token === 'string' && loginData.access_token.trim().length > 0
+  const hasRefreshToken = typeof loginData.refresh_token === 'string' && loginData.refresh_token.trim().length > 0
+  // eslint-disable-next-line no-console
+  console.info('[auth] Login response token received:', hasAccessToken ? 'yes' : 'no')
+  if (!hasAccessToken || !hasRefreshToken) {
+    return {
+      ok: false as const,
+      message: 'Login fehlgeschlagen: Token fehlt.',
+      error: 'TOKEN_MISSING',
+      status: 502,
+    }
+  }
+
   const tokens: StoredTokens = {
     accessToken: loginData.access_token,
     refreshToken: loginData.refresh_token,
@@ -123,7 +140,7 @@ export const login = async (payload: LoginPayload): Promise<LoginResult> => {
     user: loginData.user,
   }
 
-  await saveStoredTokens(tokens, Boolean(remember))
+  await saveStoredTokens(tokens, true)
 
   const deviceResult = await registerDevice(tokens.accessToken)
   if (!deviceResult.ok) {
@@ -139,6 +156,8 @@ export const logout = async () => {
 
 export const registerDevice = async (accessToken: string) => {
   const device = getDeviceInfo()
+  // eslint-disable-next-line no-console
+  console.info('[auth] Device registration token present: yes')
   const { response, payload } = await fetchJson<RemoteError>(authUrl('/api/device/register'), {
     method: 'POST',
     headers: {
