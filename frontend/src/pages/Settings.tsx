@@ -26,9 +26,12 @@ import {
   downloadBackup,
   restoreBackup,
   getBackupJob,
+  resolveApiErrorMessage,
 } from '../api'
+import { resetSession } from '../api/auth'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 
 interface SettingsFormState {
@@ -147,6 +150,7 @@ const formatBytes = (size: number) => {
 export function SettingsPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [restartState, setRestartState] = useState<'idle' | 'stopping' | 'starting' | 'error'>(
@@ -185,6 +189,9 @@ export function SettingsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [resettingSession, setResettingSession] = useState(false)
+  const [resetSessionMessage, setResetSessionMessage] = useState<string | null>(null)
+  const [resetSessionError, setResetSessionError] = useState<string | null>(null)
 
   const isDirty = useMemo(() => {
     if (!form || !initialForm) return false
@@ -211,8 +218,7 @@ export function SettingsPage() {
       setSleepSettings(settings)
       setSleepStatus(status)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load sleep mode'
-      setSleepError(message)
+      setSleepError(resolveApiErrorMessage(err))
     } finally {
       setSleepLoading(false)
     }
@@ -224,8 +230,7 @@ export function SettingsPage() {
       const status = await getSleepStatus(id)
       setSleepStatus(status)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to refresh sleep status'
-      setSleepError(message)
+      setSleepError(resolveApiErrorMessage(err))
     }
   }
 
@@ -238,8 +243,7 @@ export function SettingsPage() {
       setSleepSettings(updated)
       await refreshSleepStatus()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save sleep settings'
-      setSleepError(message)
+      setSleepError(resolveApiErrorMessage(err))
     } finally {
       setSleepSaving(false)
     }
@@ -253,8 +257,7 @@ export function SettingsPage() {
       const list = await listBackups(id)
       setBackups(list)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load backups'
-      setBackupError(message)
+      setBackupError(resolveApiErrorMessage(err))
     } finally {
       setBackupsLoading(false)
     }
@@ -301,8 +304,7 @@ export function SettingsPage() {
         loadBackups()
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start backup'
-      setBackupError(message)
+      setBackupError(resolveApiErrorMessage(err))
     }
   }
 
@@ -314,8 +316,7 @@ export function SettingsPage() {
       const result = await checkHytaleVersion(id)
       setHytaleVersion(result.version)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to check version'
-      setHytaleVersionError(message)
+      setHytaleVersionError(resolveApiErrorMessage(err))
     } finally {
       setHytaleChecking(false)
     }
@@ -329,8 +330,7 @@ export function SettingsPage() {
       await updateHytaleServer(id)
       setHytaleVersion('Updated (check version to confirm)')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update server'
-      setHytaleVersionError(message)
+      setHytaleVersionError(resolveApiErrorMessage(err))
     } finally {
       setHytaleUpdating(false)
     }
@@ -356,8 +356,7 @@ export function SettingsPage() {
         loadBackups()
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start restore'
-      setBackupError(message)
+      setBackupError(resolveApiErrorMessage(err))
       setRestoreInFlight(null)
     }
   }
@@ -368,8 +367,7 @@ export function SettingsPage() {
       await deleteBackup(id, backupId)
       loadBackups()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete backup'
-      setBackupError(message)
+      setBackupError(resolveApiErrorMessage(err))
     }
   }
 
@@ -385,8 +383,7 @@ export function SettingsPage() {
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to download backup'
-      setDownloadError(message)
+      setDownloadError(resolveApiErrorMessage(err))
     }
   }
 
@@ -415,8 +412,7 @@ export function SettingsPage() {
         setHytaleVersionError(null)
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load settings'
-      setError(message)
+      setError(resolveApiErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -534,8 +530,7 @@ export function SettingsPage() {
       const restartNeeded = currentStatus === 'running' && isRestartRelevantChange(nextForm, initialForm)
       setRestartRequired(restartNeeded)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save settings'
-      setSaveError(message)
+      setSaveError(resolveApiErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -576,9 +571,8 @@ export function SettingsPage() {
       setRestartRequired(false)
       setSuccess('Instance restarted to apply changes')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to restart instance'
       setRestartState('error')
-      setSaveError(message)
+      setSaveError(resolveApiErrorMessage(err))
     }
   }
 
@@ -590,10 +584,26 @@ export function SettingsPage() {
       await deleteInstance(id)
       navigate('/')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete instance'
-      setDeleteError(message)
+      setDeleteError(resolveApiErrorMessage(err))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleResetSession = async () => {
+    setResettingSession(true)
+    setResetSessionError(null)
+    setResetSessionMessage(null)
+    try {
+      await resetSession()
+      setResetSessionMessage('Session wurde zurückgesetzt. Bitte neu anmelden.')
+      window.setTimeout(() => {
+        window.location.reload()
+      }, 300)
+    } catch (err) {
+      setResetSessionError(resolveApiErrorMessage(err))
+    } finally {
+      setResettingSession(false)
     }
   }
 
@@ -611,7 +621,11 @@ export function SettingsPage() {
     return (
       <section className="page">
         <div className="page__toolbar">
-          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+          <BackButton
+            fallback={
+              id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+            }
+          />
         </div>
         <div className="page__header page__header--spread">
           <div>
@@ -628,7 +642,11 @@ export function SettingsPage() {
     return (
       <section className="page">
         <div className="page__toolbar">
-          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+          <BackButton
+            fallback={
+              id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+            }
+          />
         </div>
         <div className="page__header page__header--spread">
           <div>
@@ -653,7 +671,11 @@ export function SettingsPage() {
   return (
     <section className="page">
       <div className="page__toolbar">
-        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        <BackButton
+          fallback={
+            id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+          }
+        />
       </div>
       <div className="page__header page__header--spread">
         <div>
@@ -1055,6 +1077,20 @@ export function SettingsPage() {
               </table>
             </div>
           )}
+        </FormSection>
+
+        <FormSection
+          title="Debug"
+          description="Session zurücksetzen, um Token, Cache und Device-Registrierung zu löschen."
+          actions={
+            <button className="btn btn--secondary" onClick={handleResetSession} disabled={resettingSession}>
+              {resettingSession ? 'Zurücksetzen…' : 'Session zurücksetzen'}
+            </button>
+          }
+        >
+          {resetSessionError ? <div className="alert alert--error">{resetSessionError}</div> : null}
+          {resetSessionMessage ? <div className="alert alert--muted">{resetSessionMessage}</div> : null}
+          <div className="page__hint">Nach dem Reset wird die App neu geladen und verlangt erneut das Login.</div>
         </FormSection>
 
         <FormSection

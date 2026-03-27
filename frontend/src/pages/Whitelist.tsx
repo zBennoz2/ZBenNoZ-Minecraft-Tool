@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 import { addWhitelistEntry, getWhitelist, removeWhitelistEntry, WhitelistEntry } from '../api'
 
 export function WhitelistPage() {
   const { id } = useParams()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [entries, setEntries] = useState<WhitelistEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -84,7 +86,11 @@ export function WhitelistPage() {
   return (
     <section className="page">
       <div className="page__toolbar">
-        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        <BackButton
+          fallback={
+            id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+          }
+        />
       </div>
       <div className="page__header page__header--spread">
         <div>
@@ -93,7 +99,13 @@ export function WhitelistPage() {
           {id ? <p className="page__id">Instance {id}</p> : null}
         </div>
         <div className="actions actions--inline">
-          <Link className="btn btn--ghost" to={`/instances/${id}/console`}>
+          <Link
+            className="btn btn--ghost"
+            to={{
+              pathname: `/instances/${id}/console`,
+              search: isInstanceWindow ? instanceSearch : '',
+            }}
+          >
             Back to Console
           </Link>
           <button className="btn btn--ghost" onClick={refresh} disabled={loading}>

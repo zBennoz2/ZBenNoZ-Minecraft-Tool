@@ -1,5 +1,6 @@
 import { authConfig } from '../config/auth'
-import { getDeviceInfo } from './device.service'
+import { clearDeviceCache, getDeviceInfo } from './device.service'
+import { sanitizeLogPayload } from '../utils/sanitizeLogPayload'
 import { clearStoredTokens, getStoredTokens, saveStoredTokens, type StoredTokens } from './tokenStore.service'
 
 type LoginPayload = {
@@ -154,6 +155,17 @@ export const logout = async () => {
   await clearStoredTokens()
 }
 
+export const resetSession = async () => {
+  const tokenResult = await clearStoredTokens()
+  const deviceResult = clearDeviceCache()
+  return {
+    tokenDeleted: tokenResult.deleted,
+    deviceIdDeleted: deviceResult.deviceIdDeleted,
+    deviceMetaDeleted: deviceResult.deviceMetaDeleted,
+    installationIdDeleted: deviceResult.installationIdDeleted,
+  }
+}
+
 export const registerDevice = async (accessToken: string) => {
   const device = getDeviceInfo()
   // eslint-disable-next-line no-console
@@ -167,12 +179,24 @@ export const registerDevice = async (accessToken: string) => {
     },
     body: JSON.stringify({
       device_id: device.id,
+      device_aliases: device.aliases,
+      device_fingerprint: device.fingerprint,
       device_name: device.name,
       platform: device.platform,
       arch: device.arch,
       os_release: device.osRelease,
       app_version: device.appVersion,
     }),
+  })
+  const errorCode = payload?.error
+  const message = payload?.message
+  // eslint-disable-next-line no-console
+  console.info('[auth] Device register response', {
+    url: authUrl('/api/device/register'),
+    status: response.status,
+    error_code: response.ok ? undefined : errorCode,
+    message: response.ok ? undefined : message,
+    payload: sanitizeLogPayload(payload),
   })
 
   if (!response.ok) {

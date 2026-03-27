@@ -141,7 +141,9 @@ const writeToFile = (tokens: StoredTokens) => {
 }
 
 const removeFromFile = () => {
+  const existed = fs.existsSync(TOKEN_FILE)
   removeFileSafe(TOKEN_FILE)
+  return existed
 }
 
 export const getStoredTokens = async (): Promise<StoredTokens | null> => {
@@ -186,8 +188,12 @@ export const saveStoredTokens = async (tokens: StoredTokens, persist: boolean) =
 export const clearStoredTokens = async () => {
   cachedTokens = null
   volatileTokens = null
-  await removeFromKeytar()
-  removeFromFile()
+  const keytarDeleted = await removeFromKeytar()
+  const fileDeleted = removeFromFile()
+  const deleted = Boolean(keytarDeleted || fileDeleted)
+  // eslint-disable-next-line no-console
+  console.info('[auth] Token deleted:', deleted ? 'yes' : 'no')
+  return { deleted, keytarDeleted, fileDeleted }
 }
 
 export type { StoredTokens }

@@ -5,6 +5,7 @@ import { readServerProperties, writeServerProperties, ServerPropertiesResponse }
 import { PropertyLine, applyProperties, parseProperties } from '../utils/properties'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 
 type Mode = 'basic' | 'advanced'
 type Difficulty = 'peaceful' | 'easy' | 'normal' | 'hard'
@@ -257,6 +258,7 @@ const sections: {
 
 export function PropertiesPage() {
   const { id } = useParams()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
 
   const [mode, setMode] = useState<Mode>('basic')
   const [exists, setExists] = useState(true)
@@ -456,7 +458,11 @@ export function PropertiesPage() {
     return (
       <section className="page properties-page">
         <div className="page__toolbar">
-          <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+          <BackButton
+            fallback={
+              id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+            }
+          />
         </div>
         <div className="page__header page__header--spread">
           <div className="page__cluster">
@@ -473,7 +479,11 @@ export function PropertiesPage() {
   return (
     <section className="page properties-page">
       <div className="page__toolbar">
-        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        <BackButton
+          fallback={
+            id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+          }
+        />
       </div>
       <div className="page__header page__header--spread">
         <div className="page__cluster">

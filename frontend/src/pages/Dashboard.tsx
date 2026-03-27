@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import {
   CreateInstancePayload,
@@ -19,10 +18,14 @@ import {
   getInstanceStatus,
   listInstances,
   restartInstance,
+  resolveApiErrorMessage,
   startHytaleUpdate,
   startInstance,
   stopInstance,
 } from '../api'
+import { type LicenseStatus, getLicenseStatus } from '../api/license'
+import { SUPPORT_WEBSITE } from '../config'
+import useLicenseStatus from '../hooks/useLicenseStatus'
 
 const formatGigabytes = (bytes?: number | null) => {
   if (!bytes || Number.isNaN(bytes)) return '—'
@@ -38,6 +41,30 @@ interface ActionState {
   id: string
   type: ActionType
 }
+
+type CreateErrorState = {
+  message: string
+  contactUrl?: string | null
+  contactEmail?: string | null
+}
+
+const resolveNumber = (value?: number | null) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+const resolvePlanName = (license?: LicenseStatus | null) =>
+  license?.plan?.name ?? license?.plan_name ?? '—'
+
+const resolveLicenseLimits = (license?: LicenseStatus | null) => {
+  const maxInstances = resolveNumber(license?.limits?.max_instances) ?? 0
+  const instancesUsed = resolveNumber(license?.usage?.instances_used) ?? 0
+  const maxDevices = resolveNumber(license?.limits?.max_devices) ?? resolveNumber(license?.device_limit) ?? 0
+  const devicesUsed = resolveNumber(license?.usage?.devices_used) ?? resolveNumber(license?.devices_used) ?? 0
+  return { maxInstances, instancesUsed, maxDevices, devicesUsed }
+}
+
+const resolveSupportContact = (license?: LicenseStatus | null) => ({
+  contactUrl: license?.support?.contact_url ?? null,
+  contactEmail: license?.support?.contact_email ?? null,
+})
 
 const GAME_TEMPLATES = {
   minecraft: {
@@ -59,10 +86,12 @@ const GAME_TEMPLATES = {
 }
 
 export function Dashboard() {
+  const { authState, refreshLicense } = useLicenseStatus()
   const [instances, setInstances] = useState<Instance[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeAction, setActiveAction] = useState<ActionState | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [statusByInstanceId, setStatusByInstanceId] = useState<
     Record<string, InstanceStatus>
   >({})
@@ -105,7 +134,7 @@ export function Dashboard() {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<CreateErrorState | null>(null)
   const [updateModal, setUpdateModal] = useState<{
     instanceId: string
     installed: string | null
@@ -113,6 +142,19 @@ export function Dashboard() {
   } | null>(null)
 
   const isBusy = Boolean(activeAction)
+
+  const handleOpenInstanceWindow = (instanceId: string) => {
+    const params = new URLSearchParams({ windowType: 'instance', instanceId })
+    const url = `/instances/${instanceId}?${params.toString()}`
+    const windowName = `instance-${instanceId}`
+    const instanceWindow = window.open(url, windowName)
+
+    if (instanceWindow) {
+      instanceWindow.focus()
+    } else {
+      window.location.assign(url)
+    }
+  }
 
   const isHytale = createGame === 'hytale'
   const requiresLoader =
@@ -126,6 +168,11 @@ export function Dashboard() {
     if (createServerType === 'forge' || createServerType === 'neoforge') return 'forge'
     return undefined
   }, [createServerType])
+  const planName = useMemo(() => resolvePlanName(authState.license), [authState.license])
+  const displayedInstancesUsed = authState.license?.usage?.instances_used ?? '—'
+  const displayedMaxInstances = authState.license?.limits?.max_instances ?? '—'
+  const displayedDevicesUsed = authState.license?.usage?.devices_used ?? authState.license?.devices_used ?? '—'
+  const displayedMaxDevices = authState.license?.limits?.max_devices ?? authState.license?.device_limit ?? '—'
 
   const fetchInstances = async () => {
     setLoading(true)
@@ -139,8 +186,7 @@ export function Dashboard() {
       const hytaleIds = result.filter((instance) => instance.serverType === 'hytale').map((instance) => instance.id)
       await Promise.all(hytaleIds.map((instanceId) => refreshHytaleVersion(instanceId)))
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load instances'
-      setError(message)
+      setError(resolveApiErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -229,6 +275,7 @@ export function Dashboard() {
 
   const handleAction = async (id: string, type: ActionType) => {
     if (isBusy) return
+    setActionError(null)
     setActiveAction({ id, type })
     try {
       if (type === 'start') {
@@ -241,7 +288,7 @@ export function Dashboard() {
       await refreshInstanceStatus(id)
       await refreshInstanceMetrics(id)
     } catch (err) {
-      console.error('Failed to run action', err)
+      setActionError(resolveApiErrorMessage(err))
     } finally {
       setActiveAction(null)
     }
@@ -288,13 +335,28 @@ export function Dashboard() {
   const handleCreateInstance = async (event: FormEvent) => {
     event.preventDefault()
     if (!createServerType) {
-      setCreateError('Bitte Server-Typ auswählen')
+      setCreateError({ message: 'Bitte Server-Typ auswählen' })
       return
     }
     setCreating(true)
     setCreateError(null)
 
     try {
+      const latestStatus =
+        (await getLicenseStatus(true).catch(async () => refreshLicense(true))) ?? authState.license
+      if (latestStatus && (latestStatus.active || latestStatus.status === 'grace')) {
+        const { maxInstances, instancesUsed } = resolveLicenseLimits(latestStatus)
+        if (maxInstances <= instancesUsed) {
+          const { contactUrl, contactEmail } = resolveSupportContact(latestStatus)
+          setCreateError({
+            message: `Du hast dein Instanz-Limit erreicht (${instancesUsed} von ${maxInstances}). Bitte kontaktiere uns, um dein Paket zu erweitern.`,
+            contactUrl: contactUrl ?? (contactEmail ? null : SUPPORT_WEBSITE),
+            contactEmail,
+          })
+          return
+        }
+      }
+
       const payload: CreateInstancePayload = {
         name: createName.trim(),
         serverType: createServerType,
@@ -334,7 +396,7 @@ export function Dashboard() {
       await refreshInstanceMetrics(created.id)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create instance'
-      setCreateError(message)
+      setCreateError({ message })
     } finally {
       setCreating(false)
     }
@@ -429,7 +491,32 @@ export function Dashboard() {
         </div>
       </div>
 
+      <div className="support-card">
+        <div className="page__header">
+          <div>
+            <h2>Plan & Limits</h2>
+            <p className="page__hint">Aktuelle Limits aus deinem zbennoz.com Plan.</p>
+          </div>
+          <span className="badge">{planName}</span>
+        </div>
+        <div className="license-grid">
+          <div>
+            <div className="label">Instanzen</div>
+            <div className="value">
+              {displayedInstancesUsed} / {displayedMaxInstances}
+            </div>
+          </div>
+          <div>
+            <div className="label">Geräte</div>
+            <div className="value">
+              {displayedDevicesUsed} / {displayedMaxDevices}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {error ? <div className="alert alert--error">{error}</div> : null}
+      {actionError ? <div className="alert alert--error">{actionError}</div> : null}
       {loading ? <div className="alert alert--muted">Loading instances…</div> : null}
 
       {!loading && instances.length === 0 && !error ? (
@@ -551,14 +638,13 @@ export function Dashboard() {
               ) : null}
 
               <div className="instance-tile__actions">
-                <Link
+                <button
                   className="btn btn--ghost"
-                  to={`/instances/${instance.id}`}
-                  target="_blank"
-                  rel="noreferrer"
+                  type="button"
+                  onClick={() => handleOpenInstanceWindow(instance.id)}
                 >
                   Instanz öffnen
-                </Link>
+                </button>
                 {showRunActions ? (
                   <>
                     <button
@@ -812,7 +898,30 @@ export function Dashboard() {
 
               {catalogLoading ? <div className="alert alert--muted">Loading catalog…</div> : null}
               {catalogError ? <div className="alert alert--error">{catalogError}</div> : null}
-              {createError ? <div className="alert alert--error">{createError}</div> : null}
+              {createError ? (
+                <div className="alert alert--error">
+                  <div>{createError.message}</div>
+                  {createError.contactUrl || createError.contactEmail ? (
+                    <div className="license-actions">
+                      {createError.contactUrl ? (
+                        <a
+                          className="btn btn--secondary"
+                          href={createError.contactUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Kontakt
+                        </a>
+                      ) : null}
+                      {!createError.contactUrl && createError.contactEmail ? (
+                        <a className="btn btn--secondary" href={`mailto:${createError.contactEmail}`}>
+                          Kontakt
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="actions">
                 <button type="button" className="btn btn--ghost" onClick={() => setIsCreateOpen(false)}>

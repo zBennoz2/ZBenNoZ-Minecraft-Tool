@@ -1,6 +1,6 @@
 import express from 'express'
-import { getSession, login, logout } from '../services/auth.service'
-import { getCachedLicenseStatus } from '../services/licenseStatus.service'
+import { getSession, login, logout, resetSession } from '../services/auth.service'
+import { clearLicenseStatusCache, getCachedLicenseStatus } from '../services/licenseStatus.service'
 
 const router = express.Router()
 
@@ -30,7 +30,14 @@ router.post('/login', async (req, res) => {
 
 router.post('/logout', async (_req, res) => {
   await logout()
+  clearLicenseStatusCache()
   res.json({ ok: true })
+})
+
+router.post('/reset', async (_req, res) => {
+  const result = await resetSession()
+  const licenseCache = clearLicenseStatusCache()
+  res.json({ ok: true, ...result, licenseCacheDeleted: licenseCache.deleted })
 })
 
 export default router

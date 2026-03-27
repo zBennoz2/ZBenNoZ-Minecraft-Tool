@@ -11,6 +11,26 @@ export function AboutSupport() {
   const { authState, refreshLicense } = useLicenseStatus()
   const [license, setLicense] = useState<LicenseStatus | undefined>(authState.license)
   const year = useMemo(() => new Date().getFullYear(), [])
+  const planName = useMemo(
+    () => license?.plan?.name ?? license?.plan_name ?? '—',
+    [license?.plan?.name, license?.plan_name],
+  )
+  const instancesUsed = useMemo(
+    () => license?.usage?.instances_used ?? '—',
+    [license?.usage?.instances_used],
+  )
+  const maxInstances = useMemo(
+    () => license?.limits?.max_instances ?? '—',
+    [license?.limits?.max_instances],
+  )
+  const devicesUsed = useMemo(
+    () => license?.usage?.devices_used ?? license?.devices_used ?? '—',
+    [license?.usage?.devices_used, license?.devices_used],
+  )
+  const maxDevices = useMemo(
+    () => license?.limits?.max_devices ?? license?.device_limit ?? '—',
+    [license?.limits?.max_devices, license?.device_limit],
+  )
 
   useEffect(() => {
     if (authState.state === 'ready') {
@@ -71,7 +91,7 @@ export function AboutSupport() {
         <div className="license-grid">
           <div>
             <div className="label">Plan</div>
-            <div className="value">{license?.plan ?? '—'}</div>
+            <div className="value">{planName}</div>
           </div>
           <div>
             <div className="label">Aktiv</div>
@@ -86,12 +106,16 @@ export function AboutSupport() {
             <div className="value">{license?.expires_at ? new Date(license.expires_at).toLocaleString() : '—'}</div>
           </div>
           <div>
-            <div className="label">Geräte (aktiv)</div>
-            <div className="value">{license?.devices_used ?? '—'}</div>
+            <div className="label">Instanzen</div>
+            <div className="value">
+              {instancesUsed} / {maxInstances}
+            </div>
           </div>
           <div>
-            <div className="label">Geräte-Limit</div>
-            <div className="value">{license?.device_limit ?? '—'}</div>
+            <div className="label">Geräte</div>
+            <div className="value">
+              {devicesUsed} / {maxDevices}
+            </div>
           </div>
         </div>
         <div className="license-actions">

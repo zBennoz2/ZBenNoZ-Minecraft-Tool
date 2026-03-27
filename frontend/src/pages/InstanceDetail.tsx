@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet, useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 import {
   Instance,
   InstanceStatus,
   getInstance,
   getInstanceStatus,
   restartInstance,
+  resolveApiErrorMessage,
   startInstance,
   stopInstance,
 } from '../api'
@@ -35,12 +37,25 @@ const tabs = [
 
 export function InstanceDetail() {
   const { id } = useParams()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [instance, setInstance] = useState<Instance | null>(null)
   const [status, setStatus] = useState<InstanceStatus['status']>('unknown')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeAction, setActiveAction] = useState<ActionState | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const handleCloseWindow = () => {
+    window.close()
+  }
+
+  const handleReturnToList = () => {
+    if (window.opener) {
+      window.opener.focus()
+    }
+    window.close()
+  }
 
   const isBusy = Boolean(activeAction)
 
@@ -56,8 +71,7 @@ export function InstanceDetail() {
       setInstance(instanceData)
       setStatus(statusData.status ?? 'unknown')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load instance'
-      setError(message)
+      setError(resolveApiErrorMessage(err))
       setInstance(null)
       setStatus('unknown')
     } finally {
@@ -77,6 +91,7 @@ export function InstanceDetail() {
 
   const handleAction = async (type: ActionType) => {
     if (!id || isBusy) return
+    setActionError(null)
     setActiveAction({ id, type })
     try {
       if (type === 'start') {
@@ -88,7 +103,7 @@ export function InstanceDetail() {
       }
       await refreshStatus()
     } catch (err) {
-      console.error('Failed to run instance action', err)
+      setActionError(resolveApiErrorMessage(err))
     } finally {
       setActiveAction(null)
     }
@@ -117,11 +132,25 @@ export function InstanceDetail() {
   const statusBadge = useMemo(() => status ?? 'unknown', [status])
   const isRunning = status === 'running'
   const isStarting = status === 'starting'
+  const showReturnToList = isInstanceWindow && Boolean(window.opener)
 
   return (
     <section className="page">
       <div className="page__toolbar">
-        <BackButton />
+        {isInstanceWindow ? (
+          <>
+            {showReturnToList ? (
+              <button className="btn btn--ghost" type="button" onClick={handleReturnToList}>
+                Zurück zur Instanzliste
+              </button>
+            ) : null}
+            <button className="btn" type="button" onClick={handleCloseWindow}>
+              Fenster schließen
+            </button>
+          </>
+        ) : (
+          <BackButton />
+        )}
       </div>
       <div className="page__header instance-detail__header">
         <div>
@@ -163,13 +192,14 @@ export function InstanceDetail() {
 
       {loading ? <div className="alert alert--muted">Loading instance…</div> : null}
       {error ? <div className="alert alert--error">{error}</div> : null}
+      {actionError ? <div className="alert alert--error">{actionError}</div> : null}
 
       <nav className="instance-detail__tabs" aria-label="Instanz Bereiche">
         {tabs.map((tab) => (
           <NavLink
             key={tab.label}
             end={tab.to === ''}
-            to={tab.to}
+            to={{ pathname: tab.to, search: isInstanceWindow ? instanceSearch : '' }}
             className={({ isActive }) =>
               `instance-detail__tab${isActive ? ' instance-detail__tab--active' : ''}`
             }

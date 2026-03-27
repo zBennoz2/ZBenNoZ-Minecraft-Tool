@@ -4,12 +4,30 @@ import { authConfig } from '../config/auth'
 import { getDataDir } from '../config/paths'
 import { getDeviceInfo } from './device.service'
 import { getValidAccessToken, logout, registerDevice } from './auth.service'
+import { sanitizeLogPayload } from '../utils/sanitizeLogPayload'
 
 type LicenseStatus = {
   active: boolean
   status: 'active' | 'inactive' | 'grace' | 'offline' | 'unauthenticated'
   reason?: string
-  plan?: string | null
+  plan?: {
+    id?: string | null
+    name?: string | null
+  } | null
+  plan_name?: string | null
+  limits?: {
+    max_instances?: number | null
+    max_devices?: number | null
+  } | null
+  usage?: {
+    instances_used?: number | null
+    devices_used?: number | null
+  } | null
+  support?: {
+    contact_url?: string | null
+    contact_email?: string | null
+    message?: string | null
+  } | null
   expires_at?: string | null
   server_time?: string | null
   grace_until?: string | null
@@ -22,7 +40,24 @@ type LicenseStatus = {
 type LicenseStatusPayload = {
   active: boolean
   expires_at?: string | null
-  plan?: string | null
+  plan?: {
+    id?: string | null
+    name?: string | null
+  } | null
+  plan_name?: string | null
+  limits?: {
+    max_instances?: number | null
+    max_devices?: number | null
+  } | null
+  usage?: {
+    instances_used?: number | null
+    devices_used?: number | null
+  } | null
+  support?: {
+    contact_url?: string | null
+    contact_email?: string | null
+    message?: string | null
+  } | null
   reason?: string
   server_time?: string
   grace_until?: string | null
@@ -55,6 +90,26 @@ let lastSuccessAt: number | null = null
 let backoffMs = 0
 let nextAllowedAt = 0
 
+let lastDeviceRegistrationAt: number | null = null
+let lastDeviceRegistrationKey: string | null = null
+
+const shouldRegisterDevice = (token: string, force: boolean) => {
+  const now = Date.now()
+  const tokenSlice = token.slice(-18)
+  const device = getDeviceInfo()
+  const registrationKey = `${device.id}:${device.fingerprint}:${tokenSlice}`
+  const stale = !lastDeviceRegistrationAt || now - lastDeviceRegistrationAt > 12 * 60 * 60 * 1000
+  const keyChanged = registrationKey !== lastDeviceRegistrationKey
+
+  if (force || stale || keyChanged) {
+    lastDeviceRegistrationAt = now
+    lastDeviceRegistrationKey = registrationKey
+    return true
+  }
+
+  return false
+}
+
 const licenseUrl = (pathSuffix: string) =>
   `${authConfig.baseUrl}${pathSuffix.startsWith('/') ? pathSuffix : `/${pathSuffix}`}`
 
@@ -65,6 +120,108 @@ const normalizeStatusValue = (value: unknown): LicenseStatus['status'] => {
   return 'inactive'
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const getString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim().length > 0 ? value : undefined
+
+const getNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+const getBoolean = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined
+
+const resolvePayloadSource = (value: unknown): Record<string, unknown> => {
+  if (!isRecord(value)) return {}
+  const data = isRecord(value.data) ? value.data : value
+  return isRecord(data.license) ? data.license : data
+}
+
+const normalizePlan = (value: unknown, fallbackName?: string): LicenseStatus['plan'] => {
+  if (isRecord(value)) {
+    const id = getString(value.id ?? value.plan_id ?? value.code)
+    const name = getString(value.name ?? value.label ?? value.title ?? value.plan_name ?? fallbackName)
+    if (id || name) {
+      return { id: id ?? null, name: name ?? null }
+    }
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return { id: null, name: value }
+  }
+  if (fallbackName) {
+    return { id: null, name: fallbackName }
+  }
+  return null
+}
+
+const normalizeRemotePayload = (value: unknown): LicenseStatusPayload => {
+  const source = resolvePayloadSource(value)
+  const statusText = getString(source.status ?? source.license_status ?? source.state)
+  const active =
+    getBoolean(source.active ?? source.is_active ?? source.license_active) ??
+    (statusText ? statusText === 'active' || statusText === 'grace' : false)
+  const planName = getString(source.plan_name ?? source.planName ?? source.tier)
+  const plan = normalizePlan(source.plan, planName)
+  const limitsSource = isRecord(source.limits) ? source.limits : source
+  const usageSource = isRecord(source.usage) ? source.usage : source
+  const maxInstances = getNumber(
+    limitsSource.max_instances ?? limitsSource.maxInstances ?? source.max_instances ?? source.maxInstances,
+  )
+  const maxDevices = getNumber(
+    limitsSource.max_devices ??
+      limitsSource.maxDevices ??
+      source.max_devices ??
+      source.maxDevices ??
+      source.device_limit ??
+      source.deviceLimit,
+  )
+  const instancesUsed = getNumber(
+    usageSource.instances_used ?? usageSource.instancesUsed ?? source.instances_used ?? source.instancesUsed,
+  )
+  const devicesUsed = getNumber(
+    usageSource.devices_used ??
+      usageSource.devicesUsed ??
+      source.devices_used ??
+      source.devicesUsed ??
+      source.device_used ??
+      source.deviceUsed,
+  )
+  const supportSource = isRecord(source.support) ? source.support : {}
+  const supportMessage = getString(
+    supportSource.message ?? supportSource.support_message ?? source.support_message ?? source.supportMessage,
+  )
+
+  return {
+    active,
+    reason: getString(source.reason ?? source.reason_code ?? source.error ?? source.error_code),
+    message: getString(source.message ?? source.msg ?? source.detail ?? source.description),
+    plan,
+    plan_name: plan?.name ?? planName ?? null,
+    limits:
+      maxInstances !== undefined || maxDevices !== undefined
+        ? { max_instances: maxInstances ?? null, max_devices: maxDevices ?? null }
+        : null,
+    usage:
+      instancesUsed !== undefined || devicesUsed !== undefined
+        ? { instances_used: instancesUsed ?? null, devices_used: devicesUsed ?? null }
+        : null,
+    support:
+      supportMessage || getString(supportSource.contact_url ?? supportSource.contactUrl) || getString(supportSource.contact_email ?? supportSource.contactEmail)
+        ? {
+            contact_url: getString(supportSource.contact_url ?? supportSource.contactUrl) ?? null,
+            contact_email: getString(supportSource.contact_email ?? supportSource.contactEmail) ?? null,
+            message: supportMessage ?? null,
+          }
+        : null,
+    expires_at: getString(source.expires_at ?? source.expiresAt ?? source.expires ?? source.expiry) ?? null,
+    server_time: getString(source.server_time ?? source.serverTime),
+    grace_until: getString(source.grace_until ?? source.graceUntil ?? source.grace_end ?? source.graceEndsAt) ?? null,
+    device_limit: maxDevices ?? getNumber(source.device_limit ?? source.deviceLimit),
+    devices_used: devicesUsed ?? getNumber(source.devices_used ?? source.devicesUsed),
+  }
+}
+
 const normalizeLicenseStatus = (value: Partial<LicenseStatus> | null | undefined): LicenseStatus => {
   const active = Boolean(value?.active)
   const fallbackStatus = active ? 'active' : 'inactive'
@@ -73,6 +230,10 @@ const normalizeLicenseStatus = (value: Partial<LicenseStatus> | null | undefined
     status: normalizeStatusValue(value?.status ?? fallbackStatus),
     reason: value?.reason,
     plan: value?.plan ?? null,
+    plan_name: value?.plan_name ?? value?.plan?.name ?? null,
+    limits: value?.limits ?? null,
+    usage: value?.usage ?? null,
+    support: value?.support ?? null,
     expires_at: value?.expires_at ?? null,
     server_time: value?.server_time ?? null,
     grace_until: value?.grace_until ?? null,
@@ -132,6 +293,18 @@ const resetBackoff = () => {
   nextAllowedAt = 0
 }
 
+const clearCacheFile = () => {
+  try {
+    if (fs.existsSync(CACHE_FILE)) {
+      fs.unlinkSync(CACHE_FILE)
+      return true
+    }
+  } catch (error) {
+    // ignore
+  }
+  return false
+}
+
 const loadCacheIntoMemory = () => {
   const cached = readCache()
   if (!cached) return
@@ -162,6 +335,10 @@ const buildStatus = (payload: LicenseStatusPayload, override?: Partial<LicenseSt
     status: override?.status ?? baseStatus,
     reason: override?.reason ?? payload.reason,
     plan: override?.plan ?? payload.plan ?? null,
+    plan_name: override?.plan_name ?? payload.plan_name ?? payload.plan?.name ?? null,
+    limits: override?.limits ?? payload.limits ?? null,
+    usage: override?.usage ?? payload.usage ?? null,
+    support: override?.support ?? payload.support ?? null,
     expires_at: override?.expires_at ?? payload.expires_at ?? null,
     server_time: override?.server_time ?? payload.server_time ?? null,
     grace_until: override?.grace_until ?? payload.grace_until ?? null,
@@ -183,6 +360,17 @@ export const getCachedLicenseStatus = (): LicenseStatus | null => {
     return cached.status
   }
   return null
+}
+
+export const clearLicenseStatusCache = () => {
+  const deleted = clearCacheFile()
+  lastCheckedAt = null
+  lastStatus = null
+  lastSuccessAt = null
+  resetBackoff()
+  lastDeviceRegistrationAt = null
+  lastDeviceRegistrationKey = null
+  return { deleted }
 }
 
 export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
@@ -222,22 +410,24 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
 
   // eslint-disable-next-line no-console
   console.info('[auth] License check token present: yes')
-  const deviceResult = await registerDevice(tokenResult.token)
-  if (!deviceResult.ok) {
-    if (deviceResult.error === 'TOKEN_MISSING' || deviceResult.status === 401) {
-      await logout()
-      const status = buildStatus(
-        { active: false, reason: 'not_authenticated', message: deviceResult.message },
-        { status: 'unauthenticated', active: false, grace_until: getGraceUntil() },
-      )
-      lastStatus = status
-      lastCheckedAt = Date.now()
-      writeCache({
-        status,
-        checkedAt: new Date().toISOString(),
-        lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined,
-      })
-      return status
+  if (shouldRegisterDevice(tokenResult.token, Boolean(force))) {
+    const deviceResult = await registerDevice(tokenResult.token)
+    if (!deviceResult.ok) {
+      if (deviceResult.error === 'TOKEN_MISSING' || deviceResult.status === 401) {
+        await logout()
+        const status = buildStatus(
+          { active: false, reason: 'not_authenticated', message: deviceResult.message },
+          { status: 'unauthenticated', active: false, grace_until: getGraceUntil() },
+        )
+        lastStatus = status
+        lastCheckedAt = Date.now()
+        writeCache({
+          status,
+          checkedAt: new Date().toISOString(),
+          lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined,
+        })
+        return status
+      }
     }
   }
 
@@ -253,7 +443,18 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
       'X-Device-Name': device.name,
       'X-Device-Platform': device.platform,
       'X-Device-Arch': device.arch,
+      'X-Device-Fingerprint': device.fingerprint,
+      'X-Device-Aliases': device.aliases.join(','),
     },
+  })
+  const errorPayload = payload as RemoteError
+  // eslint-disable-next-line no-console
+  console.info('[auth] License status response', {
+    url,
+    status: response.status,
+    error_code: response.ok ? undefined : errorPayload?.error,
+    message: response.ok ? undefined : errorPayload?.message,
+    payload: sanitizeLogPayload(payload),
   })
 
   lastCheckedAt = Date.now()
@@ -297,7 +498,7 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
   }
 
   resetBackoff()
-  const statusPayload = payload as LicenseStatusPayload
+  const statusPayload = normalizeRemotePayload(payload)
   const status = buildStatus(statusPayload, statusPayload.active ? { status: 'active', active: true } : { status: 'inactive', active: false })
   lastStatus = status
   lastSuccessAt = Date.now()

@@ -10,12 +10,14 @@ import {
   writeFile,
 } from '../api/files'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 
 const joinPath = (base: string, name: string) =>
   [base, name].filter(Boolean).join('/').replace(/\/+/g, '/')
 
 export function FilesPage() {
   const { id } = useParams()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const controllerRef = useRef<AbortController | null>(null)
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
@@ -214,7 +216,11 @@ export function FilesPage() {
   return (
     <section className="page">
       <div className="page__toolbar">
-        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        <BackButton
+          fallback={
+            id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+          }
+        />
       </div>
       <div className="page__header page__header--spread">
         <div className="page__cluster">

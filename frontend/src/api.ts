@@ -286,6 +286,84 @@ const sortVersionsDesc = (versions: string[]) =>
 
 type FetchApiOptions = RequestInit
 
+export type ApiErrorDetails = {
+  status: number
+  url: string
+  method: string
+  errorCode?: string
+  serverMessage?: string
+}
+
+export class ApiError extends Error {
+  status: number
+  url: string
+  method: string
+  errorCode?: string
+  serverMessage?: string
+
+  constructor(message: string, details: ApiErrorDetails) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = details.status
+    this.url = details.url
+    this.method = details.method
+    this.errorCode = details.errorCode
+    this.serverMessage = details.serverMessage
+  }
+}
+
+const resolveErrorInfo = (payload: unknown) => {
+  if (!payload || typeof payload !== 'object') {
+    return { errorCode: undefined, message: undefined }
+  }
+  const record = payload as Record<string, unknown>
+  const errorCode =
+    typeof record.error_code === 'string'
+      ? record.error_code
+      : typeof record.error === 'string'
+        ? record.error
+        : undefined
+  const message = typeof record.message === 'string' ? record.message : undefined
+  return { errorCode, message }
+}
+
+const buildFriendlyMessage = (details: ApiErrorDetails) => {
+  const baseMessage = details.serverMessage
+  if (details.errorCode === 'LICENSE_REQUIRED') {
+    return baseMessage && baseMessage !== 'LICENSE_REQUIRED'
+      ? `Lizenz inaktiv. ${baseMessage}`
+      : 'Lizenz inaktiv. Bitte Lizenz prüfen.'
+  }
+  switch (details.status) {
+    case 401:
+      return baseMessage ? `Keine Berechtigung. ${baseMessage}` : 'Keine Berechtigung. Bitte neu anmelden.'
+    case 403:
+      return baseMessage ? `Keine Berechtigung. ${baseMessage}` : 'Keine Berechtigung für diese Aktion.'
+    case 404:
+      return baseMessage ? `Nicht gefunden. ${baseMessage}` : 'Ressource nicht gefunden.'
+    case 500:
+      return baseMessage ? `Backend-Fehler. ${baseMessage}` : 'Backend nicht erreichbar oder interner Fehler.'
+    default:
+      return baseMessage ?? `Request failed with status ${details.status}`
+  }
+}
+
+export const resolveApiErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    return buildFriendlyMessage({
+      status: error.status,
+      url: error.url,
+      method: error.method,
+      errorCode: error.errorCode,
+      serverMessage: error.serverMessage,
+    })
+  }
+  if (error instanceof Error && error.message.includes('Failed to fetch')) {
+    return 'Backend nicht erreichbar.'
+  }
+  return error instanceof Error ? error.message : 'Ein unbekannter Fehler ist aufgetreten.'
+}
+
 export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): Promise<T> {
   const url = apiUrl(path)
   const method = options.method || 'GET'
@@ -293,7 +371,7 @@ export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): 
   const headers = new Headers(requestOptions.headers || {})
 
   // eslint-disable-next-line no-console
-  console.debug('[api] Requesting', url, { method, hasAuth: headers.has('Authorization') })
+  console.info('[api] Request', url, { method })
 
   const response = await fetch(url, {
     headers: {
@@ -311,32 +389,32 @@ export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): 
     payload = undefined
   }
 
-  const errorCode =
-    typeof payload === 'object' && payload !== null && 'error_code' in payload
-      ? String((payload as { error_code?: unknown }).error_code ?? '')
-      : undefined
+  const { errorCode, message } = resolveErrorInfo(payload)
 
   // eslint-disable-next-line no-console
-  console.debug('[api] Response', url, {
+  console.info('[api] Response', url, {
     method,
     status: response.status,
-    hasAuth: headers.has('Authorization'),
-    errorCode: errorCode || undefined,
+    error_code: response.ok ? undefined : errorCode,
+    message: response.ok ? undefined : message,
   })
 
   if (!response.ok) {
-    const payloadObject = typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : null
-    const messageCandidate = payloadObject?.message
-    const errorCandidate = payloadObject?.error
+    const errorMessage = buildFriendlyMessage({
+      status: response.status,
+      url,
+      method,
+      errorCode,
+      serverMessage: message,
+    })
 
-    const errorMessage =
-      typeof messageCandidate === 'string' && messageCandidate.trim()
-        ? messageCandidate
-        : typeof errorCandidate === 'string' && errorCandidate.trim()
-          ? errorCandidate
-          : `Request failed with status ${response.status}`
-
-    throw new Error(errorMessage)
+    throw new ApiError(errorMessage, {
+      status: response.status,
+      url,
+      method,
+      errorCode,
+      serverMessage: message,
+    })
   }
 
   return payload as T
@@ -420,7 +498,7 @@ export type StartInstanceResult =
 export async function startInstance(id: string): Promise<StartInstanceResult> {
   const url = apiUrl(`/api/instances/${id}/start`)
   // eslint-disable-next-line no-console
-  console.log('[api] Requesting', url)
+  console.info('[api] Request', url, { method: 'POST' })
   const response = await fetch(url, { method: 'POST' })
 
   let payload: unknown
@@ -429,6 +507,15 @@ export async function startInstance(id: string): Promise<StartInstanceResult> {
   } catch (error) {
     payload = undefined
   }
+
+  const { errorCode, message } = resolveErrorInfo(payload)
+  // eslint-disable-next-line no-console
+  console.info('[api] Response', url, {
+    method: 'POST',
+    status: response.status,
+    error_code: response.ok ? undefined : errorCode,
+    message: response.ok ? undefined : message,
+  })
 
   if (!response.ok) {
     const body = (payload ?? {}) as {
@@ -448,18 +535,21 @@ export async function startInstance(id: string): Promise<StartInstanceResult> {
       }
     }
 
-    const hasErrorField =
-      typeof payload === 'object' && payload !== null && 'error' in payload
-    const hasMessageField =
-      typeof payload === 'object' && payload !== null && 'message' in payload
+    const errorMessage = buildFriendlyMessage({
+      status: response.status,
+      url,
+      method: 'POST',
+      errorCode,
+      serverMessage: message,
+    })
 
-    const errorMessage = hasErrorField
-      ? String((payload as { error?: unknown }).error ?? 'Unknown error')
-      : hasMessageField
-        ? String((payload as { message?: unknown }).message ?? 'Unknown error')
-        : `Request failed with status ${response.status}`
-
-    throw new Error(errorMessage)
+    throw new ApiError(errorMessage, {
+      status: response.status,
+      url,
+      method: 'POST',
+      errorCode,
+      serverMessage: message,
+    })
   }
 
   return { status: 'ok' }

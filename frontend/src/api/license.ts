@@ -4,7 +4,24 @@ export type LicenseStatus = {
   active: boolean
   status: 'active' | 'inactive' | 'grace' | 'offline' | 'unauthenticated'
   reason?: string
-  plan?: string | null
+  plan?: {
+    id?: string | null
+    name?: string | null
+  } | null
+  plan_name?: string | null
+  limits?: {
+    max_instances?: number | null
+    max_devices?: number | null
+  } | null
+  usage?: {
+    instances_used?: number | null
+    devices_used?: number | null
+  } | null
+  support?: {
+    contact_url?: string | null
+    contact_email?: string | null
+    message?: string | null
+  } | null
   expires_at?: string | null
   server_time?: string | null
   grace_until?: string | null

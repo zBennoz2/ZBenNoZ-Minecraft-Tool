@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useMemo, useState } from 'react'
 import { SUPPORT_WEBSITE } from '../config'
 import useLicenseStatus from '../hooks/useLicenseStatus'
 
@@ -23,7 +22,6 @@ type Props = { children: React.ReactNode }
 
 export function LicenseGate({ children }: Props) {
   const { authState, refreshLicense, login, logout } = useLicenseStatus()
-  const navigate = useNavigate()
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
@@ -33,12 +31,8 @@ export function LicenseGate({ children }: Props) {
 
   const statusLabel = useMemo(() => friendlyStatus(authState.license?.status), [authState.license?.status])
   const resolveHint = (value?: unknown) => (typeof value === 'string' && value.trim() ? value : undefined)
-
-  useEffect(() => {
-    if (authState.license?.active && authState.license?.status === 'active') {
-      navigate('/', { replace: true })
-    }
-  }, [authState.license?.active, authState.license?.status, navigate])
+  const reasonHint = authState.license?.reason ? `Grund: ${authState.license.reason}` : undefined
+  const planName = authState.license?.plan?.name ?? authState.license?.plan_name ?? undefined
 
   const handleLogin = async () => {
     setBusy(true)
@@ -75,17 +69,23 @@ export function LicenseGate({ children }: Props) {
     }
   }
 
-  if (authState.state === 'ready' && (authState.license?.status === 'active' || authState.license?.status === 'grace')) {
+  const isLicensed = authState.license?.active === true || authState.license?.status === 'grace'
+
+  if (authState.state === 'ready' && isLicensed) {
     return <>{children}</>
   }
 
   const isLoading = authState.state === 'checking'
   const statusHint =
     resolveHint(authState.license?.message) ??
+    resolveHint(reasonHint) ??
     resolveHint(authState.message) ??
     'Bitte anmelden, um die Lizenz zu prüfen.'
   const isAuthenticated = authState.authenticated
-  const isLocked = isAuthenticated && authState.license?.status && authState.license?.status !== 'active' && authState.license?.status !== 'grace'
+  const isLocked =
+    isAuthenticated &&
+    authState.license?.active === false &&
+    authState.license?.status !== 'grace'
 
   return (
     <div className="license-gate">
@@ -108,6 +108,11 @@ export function LicenseGate({ children }: Props) {
             <span className="label">Status</span>
             <div className="status-line">{statusLabel}</div>
             <p className="page__hint">{statusHint}</p>
+            {isLocked ? (
+              <div className="alert alert--error">
+                Lizenz ist nicht aktiv. Funktionen sind gesperrt, bis die Lizenz wieder gültig ist.
+              </div>
+            ) : null}
             {authState.userName ? (
               <div className="license-meta">
                 <div>
@@ -120,10 +125,10 @@ export function LicenseGate({ children }: Props) {
                     <div className="value">{new Date(authState.license.expires_at).toLocaleString()}</div>
                   </div>
                 ) : null}
-                {authState.license?.plan ? (
+                {planName ? (
                   <div>
                     <span className="label">Plan</span>
-                    <div className="value">{authState.license.plan}</div>
+                    <div className="value">{planName}</div>
                   </div>
                 ) : null}
               </div>

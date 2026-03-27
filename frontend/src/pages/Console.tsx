@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import BackButton from '../components/BackButton'
+import useWindowContext from '../hooks/useWindowContext'
 import { HytaleAuthStatus, Instance, InstanceStatus, getHytaleAuthStatus, getInstance, getInstanceStatus, sendCommand } from '../api'
 import { apiUrl } from '../config'
 
@@ -63,6 +64,7 @@ const extractHytaleAuthInfo = (line: string): HytaleAuthInfo | null => {
 
 export function ConsolePage() {
   const { id } = useParams()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [logs, setLogs] = useState<string[]>([])
   const [autoScroll, setAutoScroll] = useState(true)
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
@@ -467,7 +469,11 @@ export function ConsolePage() {
   return (
     <section className="page">
       <div className="page__toolbar">
-        <BackButton fallback={id ? `/instances/${id}/console` : '/'} />
+        <BackButton
+          fallback={
+            id ? `/instances/${id}/console${isInstanceWindow ? instanceSearch : ''}` : '/'
+          }
+        />
       </div>
       <div className="page__header page__header--spread">
         <div>

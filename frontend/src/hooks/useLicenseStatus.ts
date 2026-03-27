@@ -21,6 +21,56 @@ export function useLicenseStatus() {
     [],
   )
 
+  const normalizePlan = useCallback((value: LicenseStatus['plan'], planName?: string | null) => {
+    if (!value && planName) {
+      return { id: null, name: planName }
+    }
+    if (value && typeof value === 'object') {
+      return {
+        id: value.id ?? null,
+        name: value.name ?? planName ?? null,
+      }
+    }
+    return value ?? (planName ? { id: null, name: planName } : null)
+  }, [])
+
+  const normalizeLimits = useCallback(
+    (value: LicenseStatus['limits'], deviceLimit?: number | null): LicenseStatus['limits'] => {
+      const maxDevices = value?.max_devices ?? deviceLimit ?? null
+      if (!value && maxDevices === null) {
+        return null
+      }
+      return {
+        max_instances: value?.max_instances ?? null,
+        max_devices: maxDevices,
+      }
+    },
+    [],
+  )
+
+  const normalizeUsage = useCallback(
+    (value: LicenseStatus['usage'], devicesUsed?: number | null): LicenseStatus['usage'] => {
+      const resolvedDevicesUsed = value?.devices_used ?? devicesUsed ?? null
+      if (!value && resolvedDevicesUsed === null) {
+        return null
+      }
+      return {
+        instances_used: value?.instances_used ?? null,
+        devices_used: resolvedDevicesUsed,
+      }
+    },
+    [],
+  )
+
+  const normalizeSupport = useCallback((value: LicenseStatus['support']): LicenseStatus['support'] => {
+    if (!value) return null
+    return {
+      contact_url: value.contact_url ?? null,
+      contact_email: value.contact_email ?? null,
+      message: value.message ?? null,
+    }
+  }, [])
+
   const buildUnauthenticatedStatus = useCallback(
     (message?: string): LicenseStatus => ({
       active: false,
@@ -58,15 +108,27 @@ export function useLicenseStatus() {
       console.info('[auth] License check token present: yes')
       try {
         const status = await getLicenseStatus(force)
+        const normalizedPlan = normalizePlan(status.plan, status.plan_name)
+        const normalizedLimits = normalizeLimits(status.limits, status.device_limit)
+        const normalizedUsage = normalizeUsage(status.usage, status.devices_used)
+        const normalizedSupport = normalizeSupport(status.support)
+        const normalizedStatus: LicenseStatus = {
+          ...status,
+          status: status.status ?? (status.active ? 'active' : 'inactive'),
+          message: normalizeMessage(status.message) ?? null,
+          reason: status.reason,
+          plan: normalizedPlan,
+          plan_name: status.plan_name ?? normalizedPlan?.name ?? null,
+          limits: normalizedLimits,
+          usage: normalizedUsage,
+          support: normalizedSupport,
+        }
         setAuthState((prev) => ({
           ...prev,
           state: 'ready',
-          license: {
-            ...status,
-            message: normalizeMessage(status.message) ?? null,
-          },
+          license: normalizedStatus,
           message: undefined,
-          authenticated: status.status !== 'unauthenticated' && (session?.authenticated || prev.authenticated),
+          authenticated: Boolean(session?.authenticated) && normalizedStatus.status !== 'unauthenticated',
         }))
         return status
       } catch (error) {
@@ -92,11 +154,24 @@ export function useLicenseStatus() {
     try {
       const session = await getSession()
       const name = session.user?.name || session.user?.email
+      const normalizedPlan = normalizePlan(session.license?.plan ?? null, session.license?.plan_name ?? null)
+      const normalizedLimits = normalizeLimits(session.license?.limits ?? null, session.license?.device_limit ?? null)
+      const normalizedUsage = normalizeUsage(session.license?.usage ?? null, session.license?.devices_used ?? null)
+      const normalizedSupport = normalizeSupport(session.license?.support ?? null)
       setAuthState({
         state: 'ready',
         authenticated: session.authenticated,
         license: session.license
-          ? { ...session.license, message: normalizeMessage(session.license.message) ?? null }
+          ? {
+              ...session.license,
+              status: session.license.status ?? (session.license.active ? 'active' : 'inactive'),
+              message: normalizeMessage(session.license.message) ?? null,
+              plan: normalizedPlan,
+              plan_name: session.license.plan_name ?? normalizedPlan?.name ?? null,
+              limits: normalizedLimits,
+              usage: normalizedUsage,
+              support: normalizedSupport,
+            }
           : undefined,
         userName: name,
       })

@@ -3,6 +3,7 @@ import { InstanceManager } from '../core/InstanceManager';
 import { InstanceConfig, ServerType } from '../core/types';
 import { resolveServerPortForInstance } from '../services/serverProperties.service';
 import { deleteInstanceWithCleanup } from '../services/instanceDeletion.service';
+import { getLicenseStatus } from '../services/licenseStatus.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -67,6 +68,28 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
+    const licenseStatus = await getLicenseStatus({ force: true });
+    if (!licenseStatus.active && licenseStatus.status !== 'grace') {
+      return res.status(403).json({
+        error: 'LICENSE_REQUIRED',
+        message: licenseStatus.message || 'Lizenz nicht aktiv.',
+        status: licenseStatus,
+      });
+    }
+
+    const existingInstances = await instanceManager.listInstances();
+    const maxInstances = licenseStatus.limits?.max_instances ?? 0;
+    const instancesUsed = licenseStatus.usage?.instances_used ?? existingInstances.length;
+    if (maxInstances <= instancesUsed) {
+      return res.status(403).json({
+        error: 'INSTANCE_LIMIT_REACHED',
+        message: `Du hast dein Instanz-Limit erreicht (${instancesUsed} von ${maxInstances}). Bitte kontaktiere uns, um dein Paket zu erweitern.`,
+        limits: licenseStatus.limits,
+        usage: { instances_used: instancesUsed, devices_used: licenseStatus.usage?.devices_used ?? null },
+        support: licenseStatus.support,
+      });
+    }
+
     const created = await instanceManager.createInstance({
       name,
       serverType,

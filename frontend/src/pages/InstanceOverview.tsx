@@ -15,6 +15,7 @@ import {
   streamJavaInstall,
 } from '../api'
 import { apiUrl } from '../config'
+import useWindowContext from '../hooks/useWindowContext'
 import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 import { InstanceDetailContext } from './InstanceDetail'
 
@@ -122,6 +123,7 @@ const badgeForPhase = (phase?: PrepareEvent['phase']) => {
 export function InstanceOverview() {
   const { id } = useParams()
   const { instance } = useOutletContext<InstanceDetailContext>()
+  const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [status, setStatus] = useState<InstanceStatus['status']>('unknown')
   const [metrics, setMetrics] = useState<InstanceMetrics | null>(null)
   const [metricsError, setMetricsError] = useState<string | null>(null)
@@ -519,7 +521,15 @@ export function InstanceOverview() {
               {hasDownloaderUrlError ? (
                 <div className="page__hint" style={{ marginTop: 8 }}>
                   Set the Hytale Downloader URL in{' '}
-                  <Link to={`/instances/${instance.id}/settings`}>Settings</Link> and retry prepare.
+                  <Link
+                    to={{
+                      pathname: `/instances/${instance.id}/settings`,
+                      search: isInstanceWindow ? instanceSearch : '',
+                    }}
+                  >
+                    Settings
+                  </Link>{' '}
+                  and retry prepare.
                 </div>
               ) : null}
               {prepareJavaIssue ? (
@@ -534,7 +544,15 @@ export function InstanceOverview() {
                   </ul>
                   <div className="page__hint">
                     Install the required Java version or set a Java Path in{' '}
-                    <Link to={`/instances/${instance.id}/settings`}>Settings</Link>. After installation, retry
+                    <Link
+                      to={{
+                        pathname: `/instances/${instance.id}/settings`,
+                        search: isInstanceWindow ? instanceSearch : '',
+                      }}
+                    >
+                      Settings
+                    </Link>
+                    . After installation, retry
                     prepare. Manual downloads are available at{' '}
                     <a
                       href={`https://adoptium.net/temurin/releases/?version=${prepareJavaIssue?.requirement?.major}`}
@@ -562,7 +580,15 @@ export function InstanceOverview() {
                   {javaInstall?.status === 'error' ? (
                     <div className="page__hint" style={{ marginTop: 6 }}>
                       If the download keeps failing, set the Java Path in{' '}
-                      <Link to={`/instances/${instance.id}/settings`}>Settings</Link> or install Java{' '}
+                      <Link
+                        to={{
+                          pathname: `/instances/${instance.id}/settings`,
+                          search: isInstanceWindow ? instanceSearch : '',
+                        }}
+                      >
+                        Settings
+                      </Link>{' '}
+                      or install Java{' '}
                       {prepareJavaIssue?.requirement?.major} manually from the Adoptium site.
                     </div>
                   ) : null}

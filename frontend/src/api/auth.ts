@@ -12,6 +12,8 @@ export type AuthSession = {
   user?: AuthUser
   device?: {
     id: string
+    aliases?: string[]
+    fingerprint?: string
     name: string
     platform: string
     arch: string
@@ -76,4 +78,8 @@ export async function login(identifier: string, password: string, remember: bool
 
 export async function logout(): Promise<void> {
   await fetchApi('/api/auth/logout', { method: 'POST' })
+}
+
+export async function resetSession(): Promise<void> {
+  await fetchApi('/api/auth/reset', { method: 'POST' })
 }
