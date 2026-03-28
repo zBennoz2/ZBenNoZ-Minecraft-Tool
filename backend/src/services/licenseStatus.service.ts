@@ -459,7 +459,7 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
 
   lastCheckedAt = Date.now()
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     await logout()
     const status = buildStatus(
       { active: false, reason: 'session_expired', message: (payload as RemoteError).message },
@@ -467,6 +467,26 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
     )
     lastStatus = status
     writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined })
+    return status
+  }
+
+  if (response.status === 402 || response.status === 403) {
+    resetBackoff()
+    const statusPayload = normalizeRemotePayload(payload)
+    const status = buildStatus(statusPayload, {
+      status: 'inactive',
+      active: false,
+      reason: statusPayload.reason ?? (response.status === 402 ? 'payment_required' : 'forbidden'),
+      message:
+        statusPayload.message ??
+        (response.status === 402 ? 'Lizenz nicht aktiv oder abgelaufen.' : 'Keine Berechtigung für diese Lizenz.'),
+    })
+    lastStatus = status
+    writeCache({
+      status,
+      checkedAt: new Date().toISOString(),
+      lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined,
+    })
     return status
   }
 
