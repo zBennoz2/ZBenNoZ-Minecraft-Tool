@@ -293,7 +293,9 @@ export function FilesPage() {
                 onKeyDown={(event) => handleRowKeyDown(event, handleGoUp)}
                 onClick={handleGoUp}
               >
-                <span className="files__name">..</span>
+                <span className="files__name" title="..">
+                  ..
+                </span>
                 <span className="files__actions">Up</span>
               </div>
             ) : null}
@@ -320,8 +322,14 @@ export function FilesPage() {
                   entry.type === 'directory' ? handleEnterDirectory(entry.name) : openFile(entry.name)
                 }
               >
-                <span className="files__name">
-                  {entry.type === 'directory' ? '📁' : '📄'} {entry.name}
+                <span
+                  className="files__name"
+                  title={entry.name}
+                >
+                  <span className="files__name-icon" aria-hidden="true">
+                    {entry.type === 'directory' ? '📁' : '📄'}
+                  </span>
+                  <span className="files__name-text">{entry.name}</span>
                 </span>
                 <span className="files__actions">
                   <button
