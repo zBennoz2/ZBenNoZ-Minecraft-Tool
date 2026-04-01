@@ -183,6 +183,9 @@ export interface PrepareInstanceOptions {
   serverType: ServerType
   minecraftVersion?: string
   loader?: InstanceLoaderInfo
+  loaderVersion?: string
+  forgeVersion?: string
+  neoforgeVersion?: string
   hytaleInstallMode?: HytaleInstallMode
   hytaleDownloaderUrl?: string
   hytaleImportServerPath?: string

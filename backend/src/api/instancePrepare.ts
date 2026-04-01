@@ -35,6 +35,37 @@ const allowedTypes: ServerType[] = ['vanilla', 'paper', 'fabric', 'forge', 'neof
 
 type PrepareError = { status: number; message: string; detail?: string };
 
+type PrepareRequestLoaderInput = {
+  serverType: ServerType;
+  loaderVersion?: string;
+  forgeVersion?: string;
+  neoforgeVersion?: string;
+  loader?: { type?: LoaderType; version?: string };
+};
+
+export const resolveRequestedLoaderVersion = (input: PrepareRequestLoaderInput) => {
+  if (input.serverType === 'fabric') return input.loaderVersion ?? input.loader?.version;
+  if (input.serverType === 'forge') return input.forgeVersion ?? input.loaderVersion ?? input.loader?.version;
+  if (input.serverType === 'neoforge') return input.neoforgeVersion ?? input.loaderVersion ?? input.loader?.version;
+  return undefined;
+};
+
+export const resolveNeoForgeVersionOrThrow = (requestedVersion: string | undefined, availableVersions: string[]) => {
+  if (!requestedVersion) {
+    throw {
+      status: 400,
+      message: `NeoForge loader version is required. Available: ${availableVersions.join(', ') || 'none'}`,
+    } as PrepareError;
+  }
+  if (!availableVersions.includes(requestedVersion)) {
+    throw {
+      status: 400,
+      message: `NeoForge loader version ${requestedVersion} is not available. Available: ${availableVersions.join(', ') || 'none'}`,
+    } as PrepareError;
+  }
+  return requestedVersion;
+};
+
 const ensureDir = async (dirPath: string) => fs.mkdir(dirPath, { recursive: true });
 
 const logPrepare = async (
@@ -145,11 +176,18 @@ const resolveLoaderVersion = async (
   loaderType: LoaderType,
   providedVersion?: string,
 ): Promise<string> => {
-  if (providedVersion) return providedVersion;
-
   if (loaderType === 'fabric') {
     const catalog = await catalogService.getFabricVersions();
     const list = catalog.loaderVersionsByGame[minecraftVersion];
+    if (providedVersion) {
+      if (!list?.includes(providedVersion)) {
+        throw {
+          status: 400,
+          message: `Fabric loader version ${providedVersion} is not available for Minecraft ${minecraftVersion}. Available: ${(list ?? []).join(', ') || 'none'}`,
+        } as PrepareError;
+      }
+      return providedVersion;
+    }
     if (list?.length) return list[0];
     throw { status: 400, message: `No Fabric loader found for ${minecraftVersion}` } as PrepareError;
   }
@@ -157,14 +195,47 @@ const resolveLoaderVersion = async (
   if (loaderType === 'forge') {
     const catalog = await catalogService.getForgeVersions();
     const entry = catalog.byMinecraft[minecraftVersion];
+    if (providedVersion) {
+      if (!entry?.all?.includes(providedVersion)) {
+        throw {
+          status: 400,
+          message: `Forge loader version ${providedVersion} is not available for Minecraft ${minecraftVersion}. Available: ${(entry?.all ?? []).join(', ') || 'none'}`,
+        } as PrepareError;
+      }
+      return providedVersion;
+    }
     if (entry?.recommended) return entry.recommended;
     if (entry?.latest) return entry.latest;
     throw { status: 400, message: `No Forge version found for ${minecraftVersion}` } as PrepareError;
   }
 
   const neoforge = await catalogService.getNeoForgeVersions();
-  if (neoforge.latest) return neoforge.latest;
-  throw { status: 400, message: 'No NeoForge versions available' } as PrepareError;
+  return resolveNeoForgeVersionOrThrow(providedVersion, neoforge.versions);
+};
+
+const parsePrepareRequest = (body: {
+  serverType?: ServerType;
+  minecraftVersion?: string;
+  overwrite?: boolean;
+  loaderVersion?: string;
+  forgeVersion?: string;
+  neoforgeVersion?: string;
+  loader?: { type?: LoaderType; version?: string };
+  hytaleInstallMode?: HytaleInstallMode;
+  hytaleDownloaderUrl?: string;
+  hytaleImportServerPath?: string;
+  hytaleImportAssetsPath?: string;
+}) => {
+  const requestedLoaderVersion = body.serverType
+    ? resolveRequestedLoaderVersion({
+        serverType: body.serverType,
+        loaderVersion: body.loaderVersion,
+        forgeVersion: body.forgeVersion,
+        neoforgeVersion: body.neoforgeVersion,
+        loader: body.loader,
+      })
+    : undefined;
+  return { ...body, requestedLoaderVersion };
 };
 
 const prepareFabric = async (
@@ -282,22 +353,25 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     loaderVersion,
     forgeVersion,
     neoforgeVersion,
+    loader,
+    requestedLoaderVersion,
     hytaleInstallMode,
     hytaleDownloaderUrl,
     hytaleImportServerPath,
     hytaleImportAssetsPath,
-  } = req.body as {
+  } = parsePrepareRequest(req.body as {
     serverType?: ServerType;
     minecraftVersion?: string;
     overwrite?: boolean;
     loaderVersion?: string;
     forgeVersion?: string;
     neoforgeVersion?: string;
+    loader?: { type?: LoaderType; version?: string };
     hytaleInstallMode?: HytaleInstallMode;
     hytaleDownloaderUrl?: string;
     hytaleImportServerPath?: string;
     hytaleImportAssetsPath?: string;
-  };
+  });
 
   const normalizeOptionalString = (value?: string) => {
     if (typeof value !== 'string') return undefined;
@@ -379,13 +453,23 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     if (serverType === 'vanilla' || serverType === 'paper') {
       await prepareVanillaOrPaper(id, serverType, minecraftVersion!, overwrite);
     } else if (serverType === 'fabric') {
-      const resolvedLoader = await resolveLoaderVersion(minecraftVersion!, 'fabric', loaderVersion);
+      await logPrepare(id, `Prepare request loader input (fabric): requested=${requestedLoaderVersion ?? 'n/a'} uiLoader=${loader?.version ?? 'n/a'}`);
+      const resolvedLoader = await resolveLoaderVersion(minecraftVersion!, 'fabric', requestedLoaderVersion);
+      await logPrepare(id, `Resolved fabric loader version: ${resolvedLoader}`);
       await prepareFabric(id, minecraftVersion!, resolvedLoader, overwrite, javaBin || 'java');
     } else if (serverType === 'forge') {
-      const resolvedForge = await resolveLoaderVersion(minecraftVersion!, 'forge', forgeVersion);
+      await logPrepare(id, `Prepare request loader input (forge): requested=${requestedLoaderVersion ?? 'n/a'} uiLoader=${loader?.version ?? 'n/a'}`);
+      const resolvedForge = await resolveLoaderVersion(minecraftVersion!, 'forge', requestedLoaderVersion);
+      await logPrepare(id, `Resolved forge loader version: ${resolvedForge}`);
       await prepareForgeLike(id, 'forge', minecraftVersion!, resolvedForge, overwrite, javaBin || 'java');
     } else if (serverType === 'neoforge') {
-      const resolvedNeoForge = await resolveLoaderVersion(minecraftVersion ?? '', 'neoforge', neoforgeVersion);
+      await logPrepare(id, `Prepare request loader input (neoforge): requested=${requestedLoaderVersion ?? 'n/a'} uiLoader=${loader?.version ?? 'n/a'}`);
+      const catalog = await catalogService.getNeoForgeVersions();
+      await logPrepare(id, `Available NeoForge versions from API: ${catalog.versions.join(', ')}`, {
+        data: { availableNeoForgeVersions: catalog.versions },
+      });
+      const resolvedNeoForge = await resolveLoaderVersion(minecraftVersion ?? '', 'neoforge', requestedLoaderVersion);
+      await logPrepare(id, `NeoForge version match result: requested=${requestedLoaderVersion ?? 'n/a'} resolved=${resolvedNeoForge}`);
       await prepareForgeLike(
         id,
         'neoforge',

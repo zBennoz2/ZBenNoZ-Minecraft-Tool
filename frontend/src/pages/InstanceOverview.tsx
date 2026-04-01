@@ -189,10 +189,16 @@ export function InstanceOverview() {
 
   const triggerPrepare = async (currentInstance: Instance) => {
     if (!id) return
+    const selectedLoaderVersion = currentInstance.loader?.version
     const prepareOptions: PrepareInstanceOptions = {
       serverType: currentInstance.serverType,
       minecraftVersion: currentInstance.minecraftVersion,
       loader: currentInstance.loader,
+      ...(currentInstance.serverType === 'fabric' ? { loaderVersion: selectedLoaderVersion } : {}),
+      ...(currentInstance.serverType === 'forge' ? { forgeVersion: selectedLoaderVersion } : {}),
+      ...(currentInstance.serverType === 'neoforge'
+        ? { neoforgeVersion: selectedLoaderVersion }
+        : {}),
     }
 
     if (currentInstance.serverType === 'hytale') {
