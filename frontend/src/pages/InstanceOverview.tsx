@@ -332,10 +332,11 @@ export function InstanceOverview() {
       clearInterval(pollerRef.current)
     }
 
+    const pollIntervalMs = status === 'running' || status === 'starting' ? 2500 : 8000
     pollerRef.current = setInterval(() => {
       refreshStatus()
       refreshMetrics()
-    }, 4000)
+    }, pollIntervalMs)
 
     return () => {
       if (pollerRef.current) {
@@ -343,7 +344,7 @@ export function InstanceOverview() {
         pollerRef.current = null
       }
     }
-  }, [id])
+  }, [id, status])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
@@ -432,7 +433,7 @@ export function InstanceOverview() {
   }
 
   const isRunning = status === 'running' || status === 'starting'
-  const cpuValue = isRunning ? metrics?.cpuPercent ?? 0 : null
+  const cpuValue = isRunning ? metrics?.cpuPercent ?? null : null
   const memoryBytes = isRunning ? metrics?.memoryBytes ?? null : null
   const memoryLimitBytes = metrics?.memoryLimitBytes ?? null
   const playersOnline =

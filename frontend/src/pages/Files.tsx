@@ -284,19 +284,20 @@ export function FilesPage() {
             <span>Name</span>
             <span>Actions</span>
           </div>
-          {currentPath ? (
-            <div
-              className="files__item"
-              tabIndex={0}
-              role="button"
-              onKeyDown={(event) => handleRowKeyDown(event, handleGoUp)}
-              onClick={handleGoUp}
-            >
-              <span className="files__name">..</span>
-              <span className="files__actions">Up</span>
-            </div>
-          ) : null}
-          {entries
+          <div className="files__list-scroll">
+            {currentPath ? (
+              <div
+                className="files__item"
+                tabIndex={0}
+                role="button"
+                onKeyDown={(event) => handleRowKeyDown(event, handleGoUp)}
+                onClick={handleGoUp}
+              >
+                <span className="files__name">..</span>
+                <span className="files__actions">Up</span>
+              </div>
+            ) : null}
+            {entries
             .slice()
             .sort((a, b) => {
               if (a.type === b.type) return a.name.localeCompare(b.name)
@@ -324,7 +325,7 @@ export function FilesPage() {
                 </span>
                 <span className="files__actions">
                   <button
-                    className="btn btn--ghost"
+                    className="btn btn--ghost files__action-btn"
                     onClick={(event) => {
                       event.stopPropagation()
                       if (entry.type === 'directory') {
@@ -337,7 +338,7 @@ export function FilesPage() {
                     Open
                   </button>
                   <button
-                    className="btn btn--ghost"
+                    className="btn btn--ghost files__action-btn"
                     onClick={(event) => {
                       event.stopPropagation()
                       handleDownload(entry.name)
@@ -346,7 +347,7 @@ export function FilesPage() {
                     Download
                   </button>
                   <button
-                    className="btn btn--ghost"
+                    className="btn btn--ghost files__action-btn"
                     onClick={(event) => {
                       event.stopPropagation()
                       handleDelete(entry.name)
@@ -357,9 +358,10 @@ export function FilesPage() {
                 </span>
               </div>
             ))}
-          {entries.length === 0 && !loading ? (
-            <div className="empty">No files in this directory.</div>
-          ) : null}
+            {entries.length === 0 && !loading ? (
+              <div className="empty">No files in this directory.</div>
+            ) : null}
+          </div>
         </div>
 
         {selectedFile ? (
