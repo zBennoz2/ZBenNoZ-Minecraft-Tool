@@ -714,21 +714,33 @@ body {
 
 .instance-overview__metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
 }
 
 .instance-overview__metric {
   display: grid;
-  gap: 4px;
+  align-content: start;
+  gap: 6px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 10px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  min-height: 92px;
+  overflow: visible;
 }
 
 .instance-overview__metric span {
   color: var(--color-text-secondary);
   font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.instance-overview__metric strong {
+  font-size: clamp(1rem, 1.2vw, 1.15rem);
+  line-height: 1.3;
+  font-weight: 700;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .instance-overview__hint {
@@ -1468,12 +1480,14 @@ body {
 .files__item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
+  gap: var(--space-3);
   align-items: center;
-  padding: 12px 10px;
+  padding: 14px 12px;
+  min-height: 64px;
   border-radius: 12px;
+  border: 1px solid rgba(220, 246, 232, 0.12);
   cursor: pointer;
-  transition: background 120ms ease, transform 120ms ease;
+  transition: background 120ms ease, transform 120ms ease, border-color 120ms ease;
 }
 
 .files__item:hover,
@@ -1484,22 +1498,22 @@ body {
 
 .files__name {
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .files__actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(88px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
   justify-content: flex-end;
 }
 
 .files__action-btn {
-  width: 100%;
-  min-height: 36px;
+  min-width: 92px;
+  min-height: 38px;
 }
 
 .files__editor {
@@ -1547,7 +1561,7 @@ body {
   }
 
   .files__actions {
-    grid-template-columns: repeat(3, minmax(74px, 1fr));
+    justify-content: flex-start;
   }
 
   .files__editor,
@@ -1714,6 +1728,13 @@ body {
   pointer-events: none;
   background: linear-gradient(180deg, rgba(245, 255, 249, 0.15), rgba(245, 255, 249, 0.02) 36%, transparent 65%);
   opacity: 0.65;
+  z-index: 0;
+}
+
+.instance-overview__metric > *,
+.files__item > * {
+  position: relative;
+  z-index: 1;
 }
 
 .btn--ghost {
