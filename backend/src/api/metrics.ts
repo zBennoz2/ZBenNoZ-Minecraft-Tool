@@ -68,6 +68,8 @@ const parseMemoryLimit = (value?: string | number | null): number | null => {
   return Math.round(amount * factor)
 }
 
+const parsePsNumber = (value: string): number => Number.parseFloat(value.replace(',', '.'))
+
 const readProcessUsage = async (
   pid: number,
 ): Promise<{ cpuPercent: number | null; memoryBytes: number | null }> => {
@@ -76,18 +78,62 @@ const readProcessUsage = async (
   }
 
   try {
-    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', '%cpu,rss'])
-    const lines = stdout.trim().split(/\n+/)
-    const dataLine = lines[lines.length - 1]?.trim()
-    if (!dataLine) return { cpuPercent: null, memoryBytes: null }
+    const { stdout } = await execFileAsync('ps', ['-eo', 'pid=,ppid=,%cpu=,rss='])
+    const lines = stdout
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
 
-    const parts = dataLine.split(/\s+/)
-    const cpuRaw = Number.parseFloat(parts[0] ?? '')
-    const rssKb = Number.parseFloat(parts[1] ?? '')
+    const processRows = lines
+      .map((line) => line.split(/\s+/))
+      .map((parts) => ({
+        pid: Number.parseInt(parts[0] ?? '', 10),
+        ppid: Number.parseInt(parts[1] ?? '', 10),
+        cpu: parsePsNumber(parts[2] ?? ''),
+        rssKb: parsePsNumber(parts[3] ?? ''),
+      }))
+      .filter((row) => Number.isFinite(row.pid) && Number.isFinite(row.ppid))
+
+    if (processRows.length === 0) {
+      return { cpuPercent: null, memoryBytes: null }
+    }
+
+    const childrenByParent = new Map<number, number[]>()
+    for (const row of processRows) {
+      const children = childrenByParent.get(row.ppid) ?? []
+      children.push(row.pid)
+      childrenByParent.set(row.ppid, children)
+    }
+
+    const subtree = new Set<number>()
+    const queue = [pid]
+    while (queue.length > 0) {
+      const currentPid = queue.shift()
+      if (!currentPid || subtree.has(currentPid)) continue
+      subtree.add(currentPid)
+      const children = childrenByParent.get(currentPid) ?? []
+      for (const childPid of children) {
+        queue.push(childPid)
+      }
+    }
+
+    const rowsInSubtree = processRows.filter((row) => subtree.has(row.pid))
+    if (rowsInSubtree.length === 0) {
+      return { cpuPercent: null, memoryBytes: null }
+    }
+
+    const cpuTotal = rowsInSubtree.reduce(
+      (sum, row) => (Number.isFinite(row.cpu) ? sum + row.cpu : sum),
+      0,
+    )
+    const rssTotalKb = rowsInSubtree.reduce(
+      (sum, row) => (Number.isFinite(row.rssKb) ? sum + row.rssKb : sum),
+      0,
+    )
 
     return {
-      cpuPercent: Number.isFinite(cpuRaw) ? cpuRaw : null,
-      memoryBytes: Number.isFinite(rssKb) ? rssKb * 1024 : null,
+      cpuPercent: Number.isFinite(cpuTotal) ? Number(cpuTotal.toFixed(1)) : null,
+      memoryBytes: Number.isFinite(rssTotalKb) ? Math.round(rssTotalKb * 1024) : null,
     }
   } catch (error) {
     console.error(`Failed to execute ps for pid ${pid}`, error)
