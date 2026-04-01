@@ -27,10 +27,25 @@ import { type LicenseStatus, getLicenseStatus } from '../api/license'
 import { SUPPORT_WEBSITE } from '../config'
 import useLicenseStatus from '../hooks/useLicenseStatus'
 
-const formatGigabytes = (bytes?: number | null) => {
-  if (!bytes || Number.isNaN(bytes)) return '—'
+const formatCpuPercent = (value?: number | null) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '—'
+  if (value > 0 && value < 0.1) return '<0.1%'
+  return `${value.toFixed(1)}%`
+}
+
+const formatMemoryUsage = (bytes?: number | null) => {
+  if (typeof bytes !== 'number' || Number.isNaN(bytes)) return '—'
+
   const gb = bytes / (1024 * 1024 * 1024)
-  return gb.toFixed(gb >= 10 ? 0 : 1)
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`
+
+  const mb = bytes / (1024 * 1024)
+  if (mb >= 1) return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`
+
+  const kb = bytes / 1024
+  if (kb >= 1) return `${kb.toFixed(0)} KB`
+
+  return `${bytes.toFixed(0)} B`
 }
 
 type CreateGame = '' | 'minecraft' | 'hytale'
@@ -581,16 +596,16 @@ export function Dashboard() {
               <div className="instance-tile__metrics">
                 <div className="instance-tile__metric">
                   <span>CPU</span>
-                  <strong>{cpuValue === null ? '—' : `${cpuValue.toFixed(1)}%`}</strong>
+                  <strong>{formatCpuPercent(cpuValue)}</strong>
                 </div>
                 <div className="instance-tile__metric">
                   <span>RAM</span>
                   <strong>
                     {memoryBytes === null
                       ? '—'
-                      : `${formatGigabytes(memoryBytes)}${
-                          memoryLimitBytes ? ` / ${formatGigabytes(memoryLimitBytes)}` : ''
-                        } GB`}
+                      : `${formatMemoryUsage(memoryBytes)}${
+                          memoryLimitBytes ? ` / ${formatMemoryUsage(memoryLimitBytes)}` : ''
+                        }`}
                   </strong>
                 </div>
                 <div className="instance-tile__metric">
