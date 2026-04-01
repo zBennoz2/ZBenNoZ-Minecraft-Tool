@@ -68,6 +68,7 @@ export class InstanceManager {
     name: string;
     serverType: ServerType;
     minecraftVersion?: string;
+    loader?: InstanceConfig['loader'];
     hytale?: InstanceConfig['hytale'];
   }): Promise<InstanceConfig> {
     await this.ensureBaseDirs();
@@ -111,6 +112,7 @@ export class InstanceManager {
       rconPort: 25575,
       rconPassword: '',
       paperPluginEnabled: false,
+      loader: input.loader,
     };
 
     const config: InstanceConfig =

@@ -56,10 +56,11 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 router.post('/', async (req: Request, res: Response) => {
-  const { name, serverType, minecraftVersion, hytale } = req.body as {
+  const { name, serverType, minecraftVersion, loader, hytale } = req.body as {
     name?: string;
     serverType?: ServerType;
     minecraftVersion?: string;
+    loader?: InstanceConfig['loader'];
     hytale?: InstanceConfig['hytale'];
   };
 
@@ -94,6 +95,7 @@ router.post('/', async (req: Request, res: Response) => {
       name,
       serverType,
       minecraftVersion,
+      loader,
       hytale,
     });
     res.status(201).json(created);
