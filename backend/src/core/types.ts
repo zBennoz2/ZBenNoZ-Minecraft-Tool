@@ -101,8 +101,6 @@ export interface InstanceRuntimeInfo {
   onlinePlayers?: number | null;
 }
 
-export type TaskType = 'backup' | 'restart' | 'stop' | 'start' | 'command' | 'sleep';
-
 export type TaskSchedule =
   | { mode: 'cron'; expression: string }
   | { mode: 'interval'; intervalMinutes: number };
@@ -111,12 +109,40 @@ export interface ScheduledTaskPayload {
   command?: string;
 }
 
+export type TaskEventType =
+  | 'PlayerJoin'
+  | 'PlayerLeave'
+  | 'LastPlayerLeft'
+  | 'FirstPlayerJoined'
+  | 'ServerEmpty'
+  | 'ServerStarted'
+  | 'ServerStopped';
+
+export type TaskTrigger =
+  | { type: 'schedule'; schedule: TaskSchedule }
+  | { type: 'event'; event: TaskEventType; delaySeconds?: number; requireOnlinePlayers?: 'any' | 'non_empty' | 'empty' };
+
+export type TaskAction =
+  | { type: 'lifecycle'; operation: 'backup' | 'restart' | 'stop' | 'start' | 'sleep' }
+  | { type: 'command'; command: string }
+  | { type: 'message'; message: string; format?: 'plain' | 'legacy' | 'json' }
+  | {
+      type: 'message_then_command';
+      message: string;
+      command: string;
+      delaySeconds: number;
+      format?: 'plain' | 'legacy' | 'json';
+    };
+
 export interface ScheduledTask {
   id: string;
   instanceId: string;
   enabled: boolean;
-  type: TaskType;
-  schedule: TaskSchedule;
+  trigger: TaskTrigger;
+  action: TaskAction;
+  // legacy fields for backward-compatibility
+  type?: 'backup' | 'restart' | 'stop' | 'start' | 'command' | 'sleep';
+  schedule?: TaskSchedule;
   payload?: ScheduledTaskPayload;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
