@@ -8,6 +8,11 @@ import { sanitizeLogPayload } from '../utils/sanitizeLogPayload'
 
 type LicenseStatus = {
   active: boolean
+  valid?: boolean
+  source?: 'system_admin'
+  licenseOwner?: string | null
+  mainAdmin?: string | null
+  licenseCheckedAt?: string
   status: 'active' | 'inactive' | 'grace' | 'offline' | 'unauthenticated'
   reason?: string
   plan?: {
@@ -241,6 +246,11 @@ const normalizeLicenseStatus = (value: Partial<LicenseStatus> | null | undefined
     devices_used: value?.devices_used ?? null,
     message: value?.message ?? null,
     checked_at: value?.checked_at ?? new Date().toISOString(),
+    valid: value?.valid ?? active,
+    source: value?.source ?? 'system_admin',
+    licenseOwner: value?.licenseOwner ?? value?.mainAdmin ?? null,
+    mainAdmin: value?.mainAdmin ?? value?.licenseOwner ?? null,
+    licenseCheckedAt: value?.licenseCheckedAt ?? value?.checked_at ?? new Date().toISOString(),
   }
 }
 
@@ -351,6 +361,8 @@ const buildStatus = (payload: LicenseStatusPayload, override?: Partial<LicenseSt
 
 const applyStatusOverride = (base: LicenseStatus, override: Partial<LicenseStatus> & { status: LicenseStatus['status'] }) =>
   normalizeLicenseStatus({ ...base, ...override })
+
+export const getGlobalLicenseStatus = async (options: { force?: boolean } = {}) => getLicenseStatus(options)
 
 export const getCachedLicenseStatus = (): LicenseStatus | null => {
   if (lastStatus) return lastStatus

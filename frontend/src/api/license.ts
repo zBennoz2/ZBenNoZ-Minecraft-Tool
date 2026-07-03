@@ -2,6 +2,12 @@ import { fetchApi } from '../api'
 
 export type LicenseStatus = {
   active: boolean
+  valid?: boolean
+  source?: 'system_admin' | string
+  checkedAt?: string
+  licenseOwner?: string | null
+  mainAdmin?: string | null
+  licenseCheckedAt?: string
   status: 'active' | 'inactive' | 'grace' | 'offline' | 'unauthenticated'
   reason?: string
   plan?: {

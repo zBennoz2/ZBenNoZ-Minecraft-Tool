@@ -43,7 +43,7 @@ export function LicenseGate({ children }: Props) {
       if (!result.ok) {
         setError(result.message || 'Login fehlgeschlagen.')
       } else {
-        setSuccess('Login erfolgreich. Lizenzprüfung läuft...')
+        setSuccess('Login erfolgreich.')
         setPassword('')
       }
     } catch (err) {
@@ -94,7 +94,7 @@ export function LicenseGate({ children }: Props) {
           <div>
             <p className="badge">Login & Lizenz</p>
             <h2>{statusLabel}</h2>
-            <p className="page__hint">Melde dich mit deinem zbennoz.com Konto an.</p>
+            <p className="page__hint">Melde dich mit deinem Hauptadmin-Konto oder lokalem Benutzerkonto an.</p>
           </div>
           <div className="license-gate__link">
             <a href={SUPPORT_WEBSITE} target="_blank" rel="noreferrer">
@@ -110,7 +110,7 @@ export function LicenseGate({ children }: Props) {
             <p className="page__hint">{statusHint}</p>
             {isLocked ? (
               <div className="alert alert--error">
-                Lizenz ist nicht aktiv. Funktionen sind gesperrt, bis die Lizenz wieder gültig ist.
+                Die globale Softwarelizenz ist ungültig oder nicht verfügbar. Bitte Admin kontaktieren.
               </div>
             ) : null}
             {authState.userName ? (
@@ -170,7 +170,7 @@ export function LicenseGate({ children }: Props) {
               </>
             ) : (
               <div className="page__hint">
-                Dein Konto ist angemeldet. Die Lizenzprüfung läuft automatisch im Hintergrund.
+                Dein Konto ist angemeldet. Lokale Benutzer verwenden die globale Systemlizenz.
               </div>
             )}
             <div className="license-gate__actions">
