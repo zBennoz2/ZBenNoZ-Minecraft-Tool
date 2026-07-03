@@ -38,8 +38,8 @@ const FABRIC_GAME_VERSIONS_URL = 'https://meta.fabricmc.net/v2/versions/game';
 const FABRIC_LOADER_VERSIONS_URL = (mcVersion: string) =>
   `https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`;
 const FABRIC_INSTALLER_VERSIONS_URL = 'https://meta.fabricmc.net/v2/versions/installer';
-const FORGE_PROMOTIONS_URL =
-  'https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json';
+const FORGE_METADATA_URL =
+  'https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml';
 const NEOFORGE_METADATA_URL =
   'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml';
 
@@ -61,9 +61,6 @@ interface FabricInstallerEntry {
   stable: boolean;
 }
 
-interface ForgePromotionsResponse {
-  promos: Record<string, string>;
-}
 
 export class CatalogService {
   private vanillaCache: CacheEntry<VanillaManifest> | null = null;
@@ -219,26 +216,42 @@ export class CatalogService {
       return this.forgeCache.data;
     }
 
-    const promotions = await this.fetchJson<ForgePromotionsResponse>(FORGE_PROMOTIONS_URL, {
-      'User-Agent': FORGE_USER_AGENT,
-    });
+    const xml = await this.fetchText(FORGE_METADATA_URL, { 'User-Agent': FORGE_USER_AGENT }, 3);
+    const mavenVersions = Array.from(xml.matchAll(/<version>([^<]+)<\/version>/g)).map(
+      (match) => match[1],
+    );
 
-    const byMinecraft: Record<
-      string,
-      { latest?: string; recommended?: string; all: string[] }
-    > = {};
+    const loaderVersionsByMinecraft: Record<string, string[]> = {};
 
-    Object.entries(promotions.promos ?? {}).forEach(([key, version]) => {
-      const [mcVersion, tag] = key.split('-');
-      if (!mcVersion || !tag) return;
-      const bucket = byMinecraft[mcVersion] ?? { all: [] };
-      if (tag === 'latest') bucket.latest = version;
-      if (tag === 'recommended') bucket.recommended = version;
-      if (!bucket.all.includes(version)) bucket.all.push(version);
-      byMinecraft[mcVersion] = bucket;
-    });
+    for (const mavenVersion of mavenVersions) {
+      const separatorIndex = mavenVersion.indexOf('-');
+      if (separatorIndex <= 0 || separatorIndex === mavenVersion.length - 1) continue;
 
-    const data = { byMinecraft };
+      const minecraftVersion = mavenVersion.slice(0, separatorIndex);
+      const forgeVersion = mavenVersion.slice(separatorIndex + 1);
+      const bucket = loaderVersionsByMinecraft[minecraftVersion] ?? [];
+      if (!bucket.includes(forgeVersion)) bucket.push(forgeVersion);
+      loaderVersionsByMinecraft[minecraftVersion] = bucket;
+    }
+
+    const versions = Object.keys(loaderVersionsByMinecraft).sort((a, b) =>
+      b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }),
+    );
+
+    for (const minecraftVersion of versions) {
+      loaderVersionsByMinecraft[minecraftVersion] = loaderVersionsByMinecraft[minecraftVersion]
+        .slice()
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+    }
+
+    const byMinecraft = Object.fromEntries(
+      versions.map((minecraftVersion) => {
+        const all = loaderVersionsByMinecraft[minecraftVersion];
+        return [minecraftVersion, { latest: all[0], recommended: all[0], all }];
+      }),
+    );
+
+    const data = { versions, loaderVersionsByMinecraft, byMinecraft };
     this.forgeCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
     return data;
   }

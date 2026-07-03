@@ -221,19 +221,20 @@ const resolveLoaderVersion = async (
 
   if (loaderType === 'forge') {
     const catalog = await catalogService.getForgeVersions();
-    const entry = catalog.byMinecraft[minecraftVersion];
-    if (providedVersion) {
-      if (!entry?.all?.includes(providedVersion)) {
-        throw {
-          status: 400,
-          message: `Forge loader version ${providedVersion} is not available for Minecraft ${minecraftVersion}. Available: ${(entry?.all ?? []).join(', ') || 'none'}`,
-        } as PrepareError;
-      }
-      return providedVersion;
+    const available = catalog.loaderVersionsByMinecraft?.[minecraftVersion] ?? catalog.byMinecraft?.[minecraftVersion]?.all ?? [];
+    if (!providedVersion) {
+      throw {
+        status: 400,
+        message: `Bitte wähle eine Forge-Version für Minecraft ${minecraftVersion} aus.`,
+      } as PrepareError;
     }
-    if (entry?.recommended) return entry.recommended;
-    if (entry?.latest) return entry.latest;
-    throw { status: 400, message: `No Forge version found for ${minecraftVersion}` } as PrepareError;
+    if (!available.includes(providedVersion)) {
+      throw {
+        status: 400,
+        message: `Forge-Version ${providedVersion} ist für Minecraft ${minecraftVersion} nicht verfügbar. Available: ${available.join(', ') || 'none'}`,
+      } as PrepareError;
+    }
+    return providedVersion;
   }
 
   const neoforge = await catalogService.getNeoForgeVersions();

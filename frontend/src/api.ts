@@ -188,6 +188,8 @@ export interface CreateInstancePayload {
   serverType: ServerType
   minecraftVersion?: string
   loader?: InstanceLoaderInfo
+  forgeVersion?: string
+  neoforgeVersion?: string
   hytale?: HytaleConfig
 }
 
@@ -750,11 +752,20 @@ export async function getCatalogVersions(serverType: ServerType): Promise<Catalo
       }
     }
     case 'forge': {
-      const result = await fetchApi<{ byMinecraft?: Record<string, { all?: string[] }> }>(
+      const result = await fetchApi<{
+        versions?: string[]
+        loaderVersionsByMinecraft?: Record<string, string[]>
+        byMinecraft?: Record<string, { all?: string[] }>
+      }>(
         '/api/catalog/forge/versions',
       )
-      const versions = Object.keys(result.byMinecraft ?? {})
-      return { versions: sortVersionsDesc(versions) }
+      const loaderVersionsByMinecraft =
+        result.loaderVersionsByMinecraft ??
+        Object.fromEntries(
+          Object.entries(result.byMinecraft ?? {}).map(([version, entry]) => [version, entry.all ?? []]),
+        )
+      const versions = result.versions ?? Object.keys(loaderVersionsByMinecraft)
+      return { versions: sortVersionsDesc(versions), loaderVersionsByMinecraft }
     }
     case 'neoforge': {
       const result = await fetchApi<{ versions?: string[] }>('/api/catalog/neoforge/versions')

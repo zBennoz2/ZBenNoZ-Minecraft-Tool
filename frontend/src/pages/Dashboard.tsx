@@ -177,11 +177,12 @@ export function Dashboard() {
     createGame === 'minecraft' &&
     Boolean(createServerType) &&
     ['fabric', 'forge', 'neoforge'].includes(createServerType ?? '')
-  const showLoaderSelect = requiresLoader && loaderOptions.length > 0
+  const showLoaderSelect = requiresLoader && createServerType !== 'neoforge' && Boolean(minecraftVersion)
 
   const loaderType = useMemo(() => {
     if (createServerType === 'fabric') return 'fabric'
-    if (createServerType === 'forge' || createServerType === 'neoforge') return 'forge'
+    if (createServerType === 'forge') return 'forge'
+    if (createServerType === 'neoforge') return 'neoforge'
     return undefined
   }, [createServerType])
   const planName = useMemo(() => resolvePlanName(authState.license), [authState.license])
@@ -391,12 +392,18 @@ export function Dashboard() {
       }
 
       if (requiresLoader && loaderType) {
-        const resolvedLoaderVersion = loaderVersion || (!showLoaderSelect ? minecraftVersion : '')
+        const resolvedLoaderVersion = loaderVersion
+        if (createServerType === 'forge' && !resolvedLoaderVersion) {
+          setCreateError({ message: `Bitte wähle eine Forge-Version für Minecraft ${minecraftVersion} aus.` })
+          return
+        }
         if (resolvedLoaderVersion) {
           payload.loader = {
             type: loaderType as LoaderType,
             version: resolvedLoaderVersion,
           }
+          if (createServerType === 'forge') payload.forgeVersion = resolvedLoaderVersion
+          if (createServerType === 'neoforge') payload.neoforgeVersion = resolvedLoaderVersion
         }
       }
 
@@ -424,7 +431,8 @@ export function Dashboard() {
     !createGame ||
     !createServerType ||
     (createGame === 'minecraft' && !minecraftVersion) ||
-    (showLoaderSelect && !loaderVersion) ||
+    (createServerType === 'forge' && !loaderVersion) ||
+    (showLoaderSelect && loaderOptions.length > 0 && !loaderVersion) ||
     (createGame === 'hytale' &&
       hytaleInstallMode === 'import' &&
       (!hytaleImportServerPath || !hytaleImportAssetsPath))
@@ -449,8 +457,8 @@ export function Dashboard() {
       setLoaderOptions([])
       return
     }
-    if (minecraftVersion && loaderVersionsByMinecraft[minecraftVersion]) {
-      setLoaderOptions(loaderVersionsByMinecraft[minecraftVersion])
+    if (minecraftVersion) {
+      setLoaderOptions(loaderVersionsByMinecraft[minecraftVersion] ?? [])
       setLoaderVersion('')
     }
   }, [loaderVersionsByMinecraft, minecraftVersion, requiresLoader])
@@ -895,7 +903,7 @@ export function Dashboard() {
 
               {showLoaderSelect ? (
                 <label className="form__field">
-                  <span>Loader Version *</span>
+                  <span>{createServerType === 'forge' ? 'Forge Version *' : 'Loader Version *'}</span>
                   <select
                     value={loaderVersion}
                     onChange={(event) => setLoaderVersion(event.target.value)}
@@ -903,7 +911,11 @@ export function Dashboard() {
                     required={showLoaderSelect}
                   >
                     <option value="" disabled>
-                      {minecraftVersion ? 'Select loader version' : 'Pick a Minecraft version first'}
+                      {minecraftVersion
+                        ? createServerType === 'forge'
+                          ? 'Select Forge version'
+                          : 'Select loader version'
+                        : 'Pick a Minecraft version first'}
                     </option>
                     {loaderOptions.map((version) => (
                       <option key={version} value={version}>
@@ -912,6 +924,14 @@ export function Dashboard() {
                     ))}
                   </select>
                 </label>
+              ) : null}
+
+              {showLoaderSelect && !catalogLoading && minecraftVersion && loaderOptions.length === 0 ? (
+                <div className="alert alert--muted">
+                  {createServerType === 'forge'
+                    ? 'Keine Forge-Versionen für diese Minecraft-Version gefunden.'
+                    : 'Keine Loader-Versionen für diese Minecraft-Version gefunden.'}
+                </div>
               ) : null}
 
               {catalogLoading ? <div className="alert alert--muted">Loading catalog…</div> : null}
