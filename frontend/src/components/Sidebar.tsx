@@ -12,7 +12,7 @@ export function Sidebar() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const { authState } = useLicenseStatus()
-  const isAdmin = authState.role !== 'instance_admin'
+  const isAdmin = authState.isAdmin || authState.role === 'admin' || authState.role !== 'instance_admin'
 
   const handleLogout = async () => {
     if (loggingOut) return

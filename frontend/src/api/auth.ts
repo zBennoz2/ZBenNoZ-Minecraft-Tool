@@ -5,12 +5,18 @@ export type AuthUser = {
   id?: string
   username?: string
   role?: 'admin' | 'instance_admin'
+  isAdmin?: boolean
   email?: string
   name?: string
 }
 
 export type AuthSession = {
   authenticated: boolean
+  role?: 'admin' | 'instance_admin'
+  isAdmin?: boolean
+  userId?: string
+  username?: string
+  displayName?: string
   user?: AuthUser
   device?: {
     id: string

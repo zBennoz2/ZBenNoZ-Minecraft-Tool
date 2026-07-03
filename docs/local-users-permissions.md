@@ -28,3 +28,11 @@ Admins verwalten Benutzer in der UI unter `/users` oder per API:
 - `GET /api/users/permissions/overview`
 
 Alle `/api/instances/:id/*` Routen prüfen serverseitig `requireInstanceAccess`. Globale Adminbereiche nutzen `requireAdmin`.
+
+## API-/Lizenz-Login als Hauptadmin
+
+Der bestehende API-/Lizenz-Login bleibt der Hauptzugang für die Anwendung. Nach einem erfolgreichen API-/Lizenz-Login wird die Session serverseitig als Admin behandelt (`role: admin`, `isAdmin: true`) und die Auth-Response liefert diese Rolle eindeutig an das Frontend zurück.
+
+Falls zu diesem Zeitpunkt noch kein lokaler Admin existiert, legt der Server automatisch genau einen lokalen Fallback-Admin mit der stabilen ID `license_admin` an. Bestehende lokale Admins werden dabei nicht überschrieben und der Fallback wird nicht doppelt erzeugt.
+
+Nach dem ersten erfolgreichen API-/Lizenz-Login können weitere lokale Benutzer in der Benutzerverwaltung angelegt und Instanzen gezielt an `instance_admin`-Benutzer freigegeben werden. `instance_admin`-Benutzer bleiben weiterhin auf ihre zugewiesenen Instanzen beschränkt.

@@ -157,7 +157,7 @@ export function Dashboard() {
   } | null>(null)
 
   const isBusy = Boolean(activeAction)
-  const isAdmin = authState.role !== 'instance_admin'
+  const isAdmin = authState.isAdmin || authState.role === 'admin' || authState.role !== 'instance_admin'
 
   const handleOpenInstanceWindow = (instanceId: string) => {
     const params = new URLSearchParams({ windowType: 'instance', instanceId })

@@ -8,6 +8,7 @@ export type AuthState = {
   authenticated: boolean
   userName?: string
   role?: 'admin' | 'instance_admin'
+  isAdmin?: boolean
   message?: string
 }
 
@@ -154,7 +155,7 @@ export function useLicenseStatus() {
   const loadSession = useCallback(async () => {
     try {
       const session = await getSession()
-      const name = session.user?.name || session.user?.username || session.user?.email
+      const name = session.displayName || session.username || session.user?.name || session.user?.username || session.user?.email
       const normalizedPlan = normalizePlan(session.license?.plan ?? null, session.license?.plan_name ?? null)
       const normalizedLimits = normalizeLimits(session.license?.limits ?? null, session.license?.device_limit ?? null)
       const normalizedUsage = normalizeUsage(session.license?.usage ?? null, session.license?.devices_used ?? null)
@@ -175,7 +176,8 @@ export function useLicenseStatus() {
             }
           : undefined,
         userName: name,
-        role: session.user?.role,
+        role: session.role ?? session.user?.role,
+        isAdmin: session.isAdmin ?? session.user?.isAdmin ?? (session.role ?? session.user?.role) === 'admin',
       })
       return session
     } catch (error) {
