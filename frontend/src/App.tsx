@@ -15,6 +15,7 @@ import TasksPage from './pages/Tasks'
 import DiagnosticsPage from './pages/Diagnostics'
 import AboutSupport from './pages/AboutSupport'
 import SystemPage from './pages/System'
+import UsersPage from './pages/Users'
 import useWindowContext from './hooks/useWindowContext'
 import './App.css'
 
@@ -89,6 +90,7 @@ function App() {
               <Route path="tasks" element={<TasksPage />} />
             </Route>
             <Route path="system" element={<SystemPage />} />
+            <Route path="users" element={<UsersPage />} />
             <Route path="diagnostics" element={<DiagnosticsPage />} />
             <Route path="about" element={<AboutSupport />} />
           </Route>

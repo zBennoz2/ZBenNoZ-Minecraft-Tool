@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { resolveApiErrorMessage } from '../api'
 import { logout } from '../api/auth'
+import useLicenseStatus from '../hooks/useLicenseStatus'
 
 const linkClassName = ({ isActive }: { isActive: boolean }) =>
   `nav-link${isActive ? ' active' : ''}`
@@ -10,6 +11,8 @@ export function Sidebar() {
   const year = new Date().getFullYear()
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
+  const { authState } = useLicenseStatus()
+  const isAdmin = authState.role !== 'instance_admin'
 
   const handleLogout = async () => {
     if (loggingOut) return
@@ -35,12 +38,11 @@ export function Sidebar() {
         <NavLink to="/" className={linkClassName} end>
           Dashboard
         </NavLink>
-        <NavLink to="/system" className={linkClassName}>
-          System
-        </NavLink>
-        <NavLink to="/diagnostics" className={linkClassName}>
-          Diagnostics
-        </NavLink>
+        {isAdmin ? (<>
+          <NavLink to="/system" className={linkClassName}>System</NavLink>
+          <NavLink to="/diagnostics" className={linkClassName}>Diagnostics</NavLink>
+          <NavLink to="/users" className={linkClassName}>Benutzer</NavLink>
+        </>) : null}
         <NavLink to="/about" className={linkClassName}>
           Support / About
         </NavLink>

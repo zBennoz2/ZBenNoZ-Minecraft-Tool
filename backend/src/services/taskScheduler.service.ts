@@ -235,6 +235,11 @@ class TaskRepository {
     return null;
   }
 
+  async getTask(taskId: string): Promise<ScheduledTask | null> {
+    const located = await this.findTask(taskId);
+    return located?.task ?? null;
+  }
+
   async updateTask(taskId: string, partial: Partial<ScheduledTask>): Promise<ScheduledTask | null> {
     const located = await this.findTask(taskId);
     if (!located) return null;
@@ -501,6 +506,10 @@ class TaskScheduler {
 
   async createTask(instanceId: string, task: Omit<ScheduledTask, 'id' | 'nextRunAt' | 'lastRunAt'>) {
     return this.repository.createTask(instanceId, task);
+  }
+
+  async getTask(taskId: string) {
+    return this.repository.getTask(taskId);
   }
 
   async updateTask(taskId: string, partial: Partial<ScheduledTask>) {

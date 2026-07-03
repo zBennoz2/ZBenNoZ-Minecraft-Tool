@@ -23,6 +23,9 @@ import licenseRouter, { licenseGuardMiddleware } from './api/license';
 import systemRouter from './api/system';
 import hytaleRouter from './api/hytale';
 import jobsRouter from './api/jobs';
+import usersRouter from './api/users';
+import { requireAdmin, requireAuth, requireInstanceAccess } from './api/authz';
+import { localUsersService } from './services/localUsers.service';
 import pkg from '../package.json';
 
 const app = express();
@@ -74,6 +77,7 @@ type CorsCallback = (
     origin?: boolean;
     methods?: string[];
     allowedHeaders?: string[];
+    credentials?: boolean;
   },
 ) => void;
 
@@ -88,6 +92,7 @@ const corsOptionsDelegate = (req: express.Request, callback: CorsCallback) => {
       origin: true,
       methods: allowedMethods,
       allowedHeaders,
+      credentials: true,
     });
   }
 
@@ -108,6 +113,7 @@ const corsOptionsDelegate = (req: express.Request, callback: CorsCallback) => {
       origin: true,
       methods: allowedMethods,
       allowedHeaders,
+      credentials: true,
     });
   }
 
@@ -171,7 +177,11 @@ apiRouter.use((req, res, next) => {
 
 apiRouter.use(licenseGuardMiddleware);
 
-apiRouter.use('/catalog', catalogRouter);
+apiRouter.use(requireAuth);
+apiRouter.use('/users', usersRouter);
+apiRouter.use('/instances/:id', requireInstanceAccess);
+
+apiRouter.use('/catalog', requireAdmin, catalogRouter);
 apiRouter.use('/instances', instancesRouter);
 apiRouter.use('/instances', instancePrepareRouter);
 apiRouter.use('/instances', instanceControlRouter);
@@ -181,11 +191,11 @@ apiRouter.use('/instances', metricsRouter);
 apiRouter.use('/instances', playersRouter);
 apiRouter.use('/instances', rconSettingsRouter);
 apiRouter.use('/', tasksRouter);
-apiRouter.use('/', javaRouter);
+apiRouter.use('/', requireAdmin, javaRouter);
 apiRouter.use('/', jobsRouter);
 apiRouter.use('/instances', sleepRouter);
 apiRouter.use('/instances', backupsRouter);
-apiRouter.use('/system', systemRouter);
+apiRouter.use('/system', requireAdmin, systemRouter);
 apiRouter.use('/instances', hytaleRouter);
 
 app.use('/api', apiRouter);
@@ -216,7 +226,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, next: express
   return next(err);
 });
 
-console.log('[Security] Protected routes: /api/* (except /api/health). API key required when configured.');
+void (async () => {
+  if (!(await localUsersService.hasUsers()) && process.env.INITIAL_ADMIN_USERNAME && process.env.INITIAL_ADMIN_PASSWORD) {
+    await localUsersService.createUser({ username: process.env.INITIAL_ADMIN_USERNAME, password: process.env.INITIAL_ADMIN_PASSWORD, role: 'admin' });
+    console.log('[auth] Initial local admin created from environment.');
+  }
+})();
+
+console.log('[Security] Protected routes: /api/* (except /api/health, /api/auth). Local login required; API key additionally required when configured.');
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Minecraft Panel Backend listening on port ${PORT}`);

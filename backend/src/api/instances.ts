@@ -4,6 +4,8 @@ import { InstanceConfig, ServerType } from '../core/types';
 import { resolveServerPortForInstance } from '../services/serverProperties.service';
 import { deleteInstanceWithCleanup } from '../services/instanceDeletion.service';
 import { getLicenseStatus } from '../services/licenseStatus.service';
+import { requireAdmin } from './authz';
+import { localUsersService } from '../services/localUsers.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -15,9 +17,11 @@ const sanitizeInstance = (instance: InstanceConfig, serverPort?: number) => ({
   serverPort,
 });
 
-router.get('/', async (_req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const instances = await instanceManager.listInstances();
+    const allInstances = await instanceManager.listInstances();
+    const allowedIds = req.user?.role === 'admin' ? null : new Set(await localUsersService.userInstanceIds(req.user?.id || ''));
+    const instances = allowedIds ? allInstances.filter((instance) => allowedIds.has(instance.id)) : allInstances;
     const enriched = await Promise.all(
       instances.map(async (instance) => {
         const serverPort = await resolveServerPortForInstance(instance).catch(() => undefined);
@@ -55,7 +59,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireAdmin, async (req: Request, res: Response) => {
   const { name, serverType, minecraftVersion, loader, hytale } = req.body as {
     name?: string;
     serverType?: ServerType;
@@ -105,7 +109,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = await deleteInstanceWithCleanup(req.params.id);
     if (result.status === 'not_found') {

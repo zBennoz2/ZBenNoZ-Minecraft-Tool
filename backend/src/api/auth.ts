@@ -1,43 +1,17 @@
 import express from 'express'
-import { getSession, login, logout, resetSession } from '../services/auth.service'
+import { getSession as getRemoteSession, login as remoteLogin, logout as remoteLogout, resetSession } from '../services/auth.service'
 import { clearLicenseStatusCache, getCachedLicenseStatus } from '../services/licenseStatus.service'
-
+import { localUsersService, verifyPassword } from '../services/localUsers.service'
+import { getSessionToken } from './authz'
 const router = express.Router()
-
-router.get('/session', async (_req, res) => {
-  const session = await getSession()
-  const license = getCachedLicenseStatus()
-  res.json({ ...session, license })
-})
-
-router.post('/login', async (req, res) => {
-  const { identifier, password, remember } = req.body as {
-    identifier?: string
-    password?: string
-    remember?: boolean
-  }
-  const result = await login({ identifier: identifier || '', password: password || '', remember })
-  if (!result.ok) {
-    return res.status(result.status ?? 401).json({
-      error: result.error ?? 'LOGIN_FAILED',
-      message: result.message,
-      device_limit: result.device_limit,
-      devices_used: result.devices_used,
-    })
-  }
-  return res.json({ ok: true, user: result.user })
-})
-
-router.post('/logout', async (_req, res) => {
-  await logout()
-  clearLicenseStatusCache()
-  res.json({ ok: true })
-})
-
-router.post('/reset', async (_req, res) => {
-  const result = await resetSession()
-  const licenseCache = clearLicenseStatusCache()
-  res.json({ ok: true, ...result, licenseCacheDeleted: licenseCache.deleted })
-})
-
+const cookieName = 'zbn_session'
+const setSessionCookie = (res: express.Response, token: string, expiresAt: string) => { const parts = [`${cookieName}=${encodeURIComponent(token)}`, 'Path=/', 'SameSite=Lax', 'HttpOnly', `Expires=${new Date(expiresAt).toUTCString()}`]; if (process.env.NODE_ENV === 'production') parts.push('Secure'); res.setHeader('Set-Cookie', parts.join('; ')) }
+const clearSessionCookie = (res: express.Response) => res.setHeader('Set-Cookie', `${cookieName}=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0`)
+const safeUser = (user: any) => user ? { id: user.id, username: user.username, name: user.username, role: user.role, createdAt: user.createdAt, updatedAt: user.updatedAt } : undefined
+router.get('/session', async (req, res) => { const localUser = await localUsersService.getUserBySession(getSessionToken(req)); const license = getCachedLicenseStatus(); if (localUser) return res.json({ authenticated: true, user: safeUser(localUser), license }); const remote = await getRemoteSession(); res.json({ ...remote, license }) })
+router.get('/setup', async (_req, res) => res.json({ needsInitialAdmin: !(await localUsersService.hasUsers()) }))
+router.post('/setup', async (req, res) => { if (await localUsersService.hasUsers()) return res.status(403).json({ error: 'SETUP_CLOSED' }); const { username, password } = req.body ?? {}; if (typeof username !== 'string' || typeof password !== 'string') return res.status(400).json({ error: 'INVALID_USER_INPUT' }); const user = await localUsersService.createUser({ username, password, role: 'admin' }); const session = await localUsersService.createSession(user.id, true); setSessionCookie(res, session.token, session.expiresAt); res.status(201).json({ ok: true, user }) })
+router.post('/login', async (req, res) => { const { identifier, password, remember } = req.body as { identifier?: string; password?: string; remember?: boolean }; const localUser = identifier ? await localUsersService.findByUsername(identifier) : null; if (localUser) { if (localUser.disabled || !(await verifyPassword(password || '', localUser.passwordHash))) return res.status(401).json({ error: 'LOGIN_FAILED', message: 'Login fehlgeschlagen.' }); const session = await localUsersService.createSession(localUser.id, remember); setSessionCookie(res, session.token, session.expiresAt); return res.json({ ok: true, user: safeUser(localUser) }) } const result = await remoteLogin({ identifier: identifier || '', password: password || '', remember }); if (!result.ok) return res.status(result.status ?? 401).json({ error: result.error ?? 'LOGIN_FAILED', message: result.message, device_limit: result.device_limit, devices_used: result.devices_used }); return res.json({ ok: true, user: result.user }) })
+router.post('/logout', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); await remoteLogout(); clearSessionCookie(res); clearLicenseStatusCache(); res.json({ ok: true }) })
+router.post('/reset', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); clearSessionCookie(res); const result = await resetSession(); const licenseCache = clearLicenseStatusCache(); res.json({ ok: true, ...result, licenseCacheDeleted: licenseCache.deleted }) })
 export default router

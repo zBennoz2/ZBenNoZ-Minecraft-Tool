@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { InstanceManager } from '../core/InstanceManager';
 import { ScheduledTask, TaskAction, TaskEventType, TaskSchedule, TaskTrigger } from '../core/types';
 import { computeNextRun, taskScheduler } from '../services/taskScheduler.service';
+import { localUsersService } from '../services/localUsers.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
@@ -67,6 +68,20 @@ const parseTrigger = (input: any): TaskTrigger | null => {
   }
 
   return null;
+};
+
+
+const ensureTaskAccess = async (req: Request, res: Response) => {
+  const task = await taskScheduler.getTask(req.params.taskId);
+  if (!task) {
+    res.status(404).json({ error: 'Task not found' });
+    return null;
+  }
+  if (!req.user || !(await localUsersService.hasInstanceAccess(req.user, task.instanceId))) {
+    res.status(403).json({ error: 'INSTANCE_ACCESS_DENIED', message: 'Keine Berechtigung für diese Instanz.' });
+    return null;
+  }
+  return task;
 };
 
 const parseAction = (input: any): TaskAction | null => {
@@ -158,6 +173,8 @@ router.post('/instances/:id/tasks', async (req: Request, res: Response) => {
 });
 
 router.put('/tasks/:taskId', async (req: Request, res: Response) => {
+  const existingTask = await ensureTaskAccess(req, res);
+  if (!existingTask) return;
   const { taskId } = req.params;
   const partial: Partial<ScheduledTask> = {};
 
@@ -191,6 +208,8 @@ router.put('/tasks/:taskId', async (req: Request, res: Response) => {
 });
 
 router.delete('/tasks/:taskId', async (req: Request, res: Response) => {
+  const existingTask = await ensureTaskAccess(req, res);
+  if (!existingTask) return;
   const { taskId } = req.params;
   try {
     const deleted = await taskScheduler.deleteTask(taskId);

@@ -389,6 +389,7 @@ export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): 
   console.info('[api] Request', url, { method })
 
   const response = await fetch(url, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),
@@ -514,7 +515,7 @@ export async function startInstance(id: string): Promise<StartInstanceResult> {
   const url = apiUrl(`/api/instances/${id}/start`)
   // eslint-disable-next-line no-console
   console.info('[api] Request', url, { method: 'POST' })
-  const response = await fetch(url, { method: 'POST' })
+  const response = await fetch(url, { method: 'POST', credentials: 'include' })
 
   let payload: unknown
   try {
@@ -885,6 +886,7 @@ export async function downloadBackup(id: string, backupId: string): Promise<Blob
   console.log('[api] Requesting', url)
 
   const response = await fetch(url, {
+    credentials: 'include',
     headers: {
       ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),
     },

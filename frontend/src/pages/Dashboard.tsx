@@ -157,6 +157,7 @@ export function Dashboard() {
   } | null>(null)
 
   const isBusy = Boolean(activeAction)
+  const isAdmin = authState.role !== 'instance_admin'
 
   const handleOpenInstanceWindow = (instanceId: string) => {
     const params = new URLSearchParams({ windowType: 'instance', instanceId })
@@ -500,9 +501,11 @@ export function Dashboard() {
           <button className="btn btn--ghost" onClick={fetchInstances} disabled={loading}>
             {loading ? 'Reloading…' : 'Reload'}
           </button>
-          <button className="btn" onClick={handleOpenCreate}>
-            Create Instance
-          </button>
+          {isAdmin ? (
+            <button className="btn" onClick={handleOpenCreate}>
+              Create Instance
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -719,7 +722,7 @@ export function Dashboard() {
         </div>
       ) : null}
 
-      {isCreateOpen ? (
+      {isAdmin && isCreateOpen ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setIsCreateOpen(false)}>
           <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal__header">

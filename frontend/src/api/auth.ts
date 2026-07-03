@@ -3,6 +3,8 @@ import type { LicenseStatus } from './license'
 
 export type AuthUser = {
   id?: string
+  username?: string
+  role?: 'admin' | 'instance_admin'
   email?: string
   name?: string
 }
