@@ -32,6 +32,7 @@ import { resetSession } from '../api/auth'
 import { FormRow, FormSection, FormToggle } from '../components/FormLayout'
 import BackButton from '../components/BackButton'
 import useWindowContext from '../hooks/useWindowContext'
+import useLicenseStatus from '../hooks/useLicenseStatus'
 import { formatJavaCandidateList, formatJavaRequirement } from '../utils/javaRequirement'
 
 interface SettingsFormState {
@@ -149,6 +150,8 @@ const formatBytes = (size: number) => {
 
 export function SettingsPage() {
   const { id } = useParams()
+  const { authState } = useLicenseStatus()
+  const canEditResources = authState.role === 'admin' || authState.isAdmin === true
   const navigate = useNavigate()
   const { isInstanceWindow, instanceSearch } = useWindowContext()
   const [loading, setLoading] = useState(false)
@@ -436,8 +439,8 @@ export function SettingsPage() {
   const handleSave = async () => {
     if (!id || !form || !initialForm || !instanceSnapshot) return
 
-    const normalizedMemory = normalizeMemoryInput(form.memoryMax)
-    if (normalizedMemory.error || !normalizedMemory.value) {
+    const normalizedMemory = canEditResources ? normalizeMemoryInput(form.memoryMax) : { value: initialForm.memoryMax }
+    if (canEditResources && (normalizedMemory.error || !normalizedMemory.value)) {
       setValidation((prev) => ({ ...prev, memoryMax: normalizedMemory.error }))
       return
     }
@@ -460,17 +463,17 @@ export function SettingsPage() {
       payload.name = form.name
     }
 
-    if (form.memoryMax.trim() !== initialForm.memoryMax.trim()) {
+    if (canEditResources && form.memoryMax.trim() !== initialForm.memoryMax.trim()) {
       payload.memory = { ...(instanceSnapshot.memory ?? {}), max: normalizedMemory.value }
     }
 
     const trimmedJavaPath = form.javaPath.trim()
-    if (trimmedJavaPath !== initialForm.javaPath.trim()) {
+    if (canEditResources && trimmedJavaPath !== initialForm.javaPath.trim()) {
       payload.javaPath = trimmedJavaPath || null
       payload.java = { ...(instanceSnapshot.java ?? {}), javaPath: trimmedJavaPath || null }
     }
 
-    if (form.nogui !== initialForm.nogui) {
+    if (canEditResources && form.nogui !== initialForm.nogui) {
       payload.nogui = form.nogui
     }
 
@@ -483,7 +486,7 @@ export function SettingsPage() {
       .map((entry) => entry.trim())
       .filter(Boolean)
 
-    if (form.startupArgs.trim() !== initialForm.startupArgs.trim()) {
+    if (canEditResources && form.startupArgs.trim() !== initialForm.startupArgs.trim()) {
       payload.startup = { ...(instanceSnapshot.startup ?? { mode: form.startupMode ?? 'jar' }) }
       payload.startup.args = parsedArgs
     }
@@ -500,7 +503,7 @@ export function SettingsPage() {
         form.hytaleBind.trim() !== initialForm.hytaleBind.trim() ||
         form.hytaleAssetsPath.trim() !== initialForm.hytaleAssetsPath.trim() ||
         form.hytaleAuthMode !== initialForm.hytaleAuthMode ||
-        form.hytaleJvmArgs.trim() !== initialForm.hytaleJvmArgs.trim() ||
+        (canEditResources && form.hytaleJvmArgs.trim() !== initialForm.hytaleJvmArgs.trim()) ||
         form.hytaleDownloaderUrl.trim() !== initialForm.hytaleDownloaderUrl.trim()
 
       if (hytaleChanged) {
@@ -510,7 +513,7 @@ export function SettingsPage() {
           bind: form.hytaleBind.trim() || '0.0.0.0',
           assetsPath: form.hytaleAssetsPath.trim() || 'Assets.zip',
           authMode: form.hytaleAuthMode,
-          jvmArgs: hytaleJvmArgs,
+          jvmArgs: canEditResources ? hytaleJvmArgs : (instanceSnapshot.hytale?.jvmArgs ?? []),
           install: {
             ...(instanceSnapshot.hytale?.install ?? {}),
             downloaderUrl: form.hytaleDownloaderUrl.trim() || undefined,
@@ -740,10 +743,12 @@ export function SettingsPage() {
         </FormSection>
 
         <FormSection title="Resources">
+          {!canEditResources ? <div className="notice">Nur Admins dürfen RAM/Ressourcen ändern.</div> : null}
           <FormRow label="RAM Max" help="z. B. 2G oder 4096M">
             <input
               type="text"
               value={form.memoryMax}
+              disabled={!canEditResources}
               onChange={(event) => handleMemoryChange(event.target.value)}
               onBlur={(event) => {
                 const normalized = normalizeMemoryInput(event.target.value)
@@ -764,6 +769,7 @@ export function SettingsPage() {
               type="text"
               placeholder="/usr/bin/java"
               value={form.javaPath}
+              disabled={!canEditResources}
               onChange={(event) =>
                 setForm((prev) => (prev ? { ...prev, javaPath: event.target.value } : prev))
               }
@@ -847,6 +853,7 @@ export function SettingsPage() {
               <input
                 type="text"
                 value={form.hytaleJvmArgs}
+                disabled={!canEditResources}
                 onChange={(event) =>
                   setForm((prev) => (prev ? { ...prev, hytaleJvmArgs: event.target.value } : prev))
                 }
@@ -889,7 +896,7 @@ export function SettingsPage() {
                 setForm((prev) => (prev ? { ...prev, startupArgs: event.target.value } : prev))
               }
               placeholder={form.startupMode === 'script' ? 'Arg1 Arg2' : 'Not supported for jar mode'}
-              disabled={form.startupMode !== 'script'}
+              disabled={!canEditResources || form.startupMode !== 'script'}
             />
           </FormRow>
         </FormSection>

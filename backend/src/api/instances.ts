@@ -4,11 +4,22 @@ import { InstanceConfig, ServerType } from '../core/types';
 import { resolveServerPortForInstance } from '../services/serverProperties.service';
 import { deleteInstanceWithCleanup } from '../services/instanceDeletion.service';
 import { getLicenseStatus } from '../services/licenseStatus.service';
-import { requireAdmin } from './authz';
+import { requireAdmin, requireResourceAdmin } from './authz';
 import { localUsersService } from '../services/localUsers.service';
 
 const router = Router();
 const instanceManager = new InstanceManager();
+
+
+const RESOURCE_SETTING_KEYS = new Set(['memory', 'startup', 'java', 'javaPath', 'nogui']);
+const containsResourceChange = (payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return false;
+  const body = payload as Record<string, unknown>;
+  if (Object.keys(body).some((key) => RESOURCE_SETTING_KEYS.has(key))) return true;
+  const hytale = body.hytale;
+  if (hytale && typeof hytale === 'object' && Object.prototype.hasOwnProperty.call(hytale, 'jvmArgs')) return true;
+  return false;
+};
 
 const sanitizeInstance = (instance: InstanceConfig, serverPort?: number) => ({
   ...instance,
@@ -49,7 +60,11 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', async (req: Request, res: Response, next) => {
+  if (containsResourceChange(req.body) && req.user?.role !== 'admin') {
+    return requireResourceAdmin(req, res, next);
+  }
+
   try {
     const updated = await instanceManager.updateInstance(req.params.id, req.body ?? {});
     res.json(sanitizeInstance(updated));

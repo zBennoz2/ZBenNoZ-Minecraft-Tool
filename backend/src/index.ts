@@ -29,6 +29,7 @@ import { localUsersService } from './services/localUsers.service';
 import pkg from '../package.json';
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT) || 3001;
 
 const resolveUiDistPath = () => {
