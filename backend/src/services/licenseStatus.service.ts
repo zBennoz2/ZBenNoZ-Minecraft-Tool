@@ -9,7 +9,7 @@ import { sanitizeLogPayload } from '../utils/sanitizeLogPayload'
 type LicenseStatus = {
   active: boolean
   valid?: boolean
-  source?: 'system_admin'
+  source?: 'system_admin' | 'license_admin'
   licenseOwner?: string | null
   mainAdmin?: string | null
   licenseCheckedAt?: string
@@ -40,6 +40,8 @@ type LicenseStatus = {
   devices_used?: number | null
   message?: string | null
   checked_at?: string
+  checkedAt?: string
+  lastSuccessfulCheckAt?: string
 }
 
 type LicenseStatusPayload = {
@@ -88,6 +90,8 @@ const LICENSE_STATUS_VALUES = ['active', 'inactive', 'grace', 'offline', 'unauth
 type LicenseStatusValue = (typeof LICENSE_STATUS_VALUES)[number]
 
 const CACHE_FILE = path.join(getDataDir(), 'license.status.json')
+const GLOBAL_LICENSE_STATUS_FILE = path.join(getDataDir(), 'license_status.json')
+const GLOBAL_LICENSE_GRACE_MS = 7 * 24 * 60 * 60 * 1000
 
 let lastCheckedAt: number | null = null
 let lastStatus: LicenseStatus | null = null
@@ -245,13 +249,89 @@ const normalizeLicenseStatus = (value: Partial<LicenseStatus> | null | undefined
     device_limit: value?.device_limit ?? null,
     devices_used: value?.devices_used ?? null,
     message: value?.message ?? null,
-    checked_at: value?.checked_at ?? new Date().toISOString(),
+    checked_at: value?.checked_at ?? value?.checkedAt ?? new Date().toISOString(),
+    checkedAt: value?.checkedAt ?? value?.checked_at ?? value?.licenseCheckedAt ?? new Date().toISOString(),
+    lastSuccessfulCheckAt: value?.lastSuccessfulCheckAt,
     valid: value?.valid ?? active,
     source: value?.source ?? 'system_admin',
     licenseOwner: value?.licenseOwner ?? value?.mainAdmin ?? null,
     mainAdmin: value?.mainAdmin ?? value?.licenseOwner ?? null,
-    licenseCheckedAt: value?.licenseCheckedAt ?? value?.checked_at ?? new Date().toISOString(),
+    licenseCheckedAt: value?.licenseCheckedAt ?? value?.checkedAt ?? value?.checked_at ?? new Date().toISOString(),
   }
+}
+
+
+const isRecentSuccessfulCheck = (value?: string) => {
+  if (!value) return false
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) && Date.now() - timestamp <= GLOBAL_LICENSE_GRACE_MS
+}
+
+const publicGlobalStatus = (status: Partial<LicenseStatus>, message?: string): LicenseStatus => {
+  const lastSuccessfulCheckAt = status.lastSuccessfulCheckAt
+  const storedValid = status.valid === true || status.active === true
+  const graceValid = !storedValid && isRecentSuccessfulCheck(lastSuccessfulCheckAt)
+  const checkedAt = status.checkedAt ?? status.licenseCheckedAt ?? status.checked_at ?? new Date().toISOString()
+  return normalizeLicenseStatus({
+    ...status,
+    active: storedValid || graceValid,
+    valid: storedValid || graceValid,
+    status: storedValid ? 'active' : graceValid ? 'grace' : 'inactive',
+    source: status.source ?? 'system_admin',
+    checkedAt,
+    checked_at: checkedAt,
+    licenseCheckedAt: checkedAt,
+    lastSuccessfulCheckAt,
+    message: message ?? (storedValid || graceValid ? 'Global license valid' : status.message ?? null),
+  })
+}
+
+export const readGlobalLicenseStatus = (): LicenseStatus | null => {
+  try {
+    if (!fs.existsSync(GLOBAL_LICENSE_STATUS_FILE)) return null
+    const raw = fs.readFileSync(GLOBAL_LICENSE_STATUS_FILE, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<LicenseStatus>
+    return publicGlobalStatus(parsed)
+  } catch (error) {
+    return null
+  }
+}
+
+const writeGlobalLicenseStatus = (status: LicenseStatus) => {
+  const now = new Date().toISOString()
+  const payload = {
+    valid: true,
+    active: true,
+    status: 'active' as const,
+    source: status.source ?? 'system_admin',
+    checkedAt: now,
+    checked_at: now,
+    licenseCheckedAt: now,
+    lastSuccessfulCheckAt: now,
+    plan: status.plan ?? null,
+    plan_name: status.plan_name ?? status.plan?.name ?? null,
+    limits: status.limits ?? null,
+    usage: status.usage ?? null,
+    support: status.support ?? null,
+    expires_at: status.expires_at ?? null,
+    server_time: status.server_time ?? null,
+    grace_until: status.grace_until ?? null,
+    device_limit: status.device_limit ?? null,
+    devices_used: status.devices_used ?? null,
+    message: 'Global license valid',
+  }
+  fs.mkdirSync(getDataDir(), { recursive: true })
+  fs.writeFileSync(GLOBAL_LICENSE_STATUS_FILE, JSON.stringify(payload, null, 2), 'utf-8')
+  return publicGlobalStatus(payload)
+}
+
+export const getStoredGlobalLicenseStatus = () => {
+  const status = readGlobalLicenseStatus()
+  if (status) return status
+  return publicGlobalStatus(
+    { active: false, valid: false, status: 'inactive', source: 'system_admin' },
+    'Die globale Softwarelizenz wurde noch nicht durch den Hauptadmin aktiviert. Bitte zuerst als Hauptadmin anmelden.',
+  )
 }
 
 const readCache = (): CacheFile | null => {
@@ -362,7 +442,7 @@ const buildStatus = (payload: LicenseStatusPayload, override?: Partial<LicenseSt
 const applyStatusOverride = (base: LicenseStatus, override: Partial<LicenseStatus> & { status: LicenseStatus['status'] }) =>
   normalizeLicenseStatus({ ...base, ...override })
 
-export const getGlobalLicenseStatus = async (options: { force?: boolean } = {}) => getLicenseStatus(options)
+export const getGlobalLicenseStatus = async (_options: { force?: boolean } = {}) => getStoredGlobalLicenseStatus()
 
 export const getCachedLicenseStatus = (): LicenseStatus | null => {
   if (lastStatus) return lastStatus
@@ -410,8 +490,9 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
   if (!tokenResult.ok) {
     // eslint-disable-next-line no-console
     console.info('[auth] License check token present: no')
-    const status = buildStatus(
-      { active: false, reason: 'not_authenticated' },
+    const storedGlobalStatus = readGlobalLicenseStatus()
+    const status = storedGlobalStatus ?? buildStatus(
+      { active: false, reason: 'not_authenticated', message: 'Die globale Softwarelizenz wurde noch nicht durch den Hauptadmin aktiviert. Bitte zuerst als Hauptadmin anmelden.' },
       { status: 'unauthenticated', active: false, grace_until: getGraceUntil() },
     )
     lastStatus = status
@@ -533,8 +614,14 @@ export const getLicenseStatus = async (options: { force?: boolean } = {}) => {
   const statusPayload = normalizeRemotePayload(payload)
   const status = buildStatus(statusPayload, statusPayload.active ? { status: 'active', active: true } : { status: 'inactive', active: false })
   lastStatus = status
-  lastSuccessAt = Date.now()
-  writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: new Date(lastSuccessAt).toISOString() })
+  if (status.active) {
+    const globalStatus = writeGlobalLicenseStatus(status)
+    lastStatus = globalStatus
+    lastSuccessAt = Date.now()
+    writeCache({ status: globalStatus, checkedAt: new Date().toISOString(), lastSuccessAt: new Date(lastSuccessAt).toISOString() })
+    return globalStatus
+  }
+  writeCache({ status, checkedAt: new Date().toISOString(), lastSuccessAt: lastSuccessAt ? new Date(lastSuccessAt).toISOString() : undefined })
   return status
 }
 
