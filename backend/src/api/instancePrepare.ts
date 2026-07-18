@@ -8,6 +8,8 @@ import { DownloadService } from '../core/DownloadService';
 import { InstanceManager } from '../core/InstanceManager';
 import { LogService } from '../core/LogService';
 import { PreparePhase, prepareEventService } from '../services/prepareEvent.service';
+import { jarUpload } from '../middleware/jarUpload.middleware';
+import { installManualJar, ManualJarMode, ManualJarServerType } from '../services/manualJarInstaller.service';
 import { LoaderType, ServerType } from '../core/types';
 import { getJavaRequirement, resolveJavaForInstance } from '../services/java.service';
 import { InstanceActionError } from '../core/InstanceActionError';
@@ -77,20 +79,20 @@ export const resolveRequestedLoaderVersion = (input: PrepareRequestLoaderInput) 
   return undefined;
 };
 
-export const resolveNeoForgeVersionOrThrow = (requestedVersion: string | undefined, availableVersions: string[]) => {
-  if (!requestedVersion) {
+export const resolveNeoForgeVersionOrThrow = (requestedVersion: string | undefined, availableVersions: string[], metadataUrl = NEOFORGE_MAVEN_BASE) => {
+  const normalized = typeof requestedVersion === 'string' ? requestedVersion.trim() : requestedVersion;
+  if (!normalized) {
+    throw { status: 400, message: 'Bitte wähle eine NeoForge-Version aus oder lade einen eigenen Installer hoch.' } as PrepareError;
+  }
+  if (!availableVersions.includes(normalized)) {
+    const similar = availableVersions.filter((version) => version.startsWith(normalized.split('.').slice(0, 2).join('.'))).slice(0, 5);
     throw {
       status: 400,
-      message: `NeoForge loader version is required. Available: ${availableVersions.join(', ') || 'none'}`,
+      message: `Die NeoForge-Version ${normalized} ist im aktuellen Katalog nicht verfügbar.`,
+      detail: `Katalog: ${metadataUrl}. Ähnliche Versionen: ${similar.join(', ') || 'keine'}. Alternativ kann ein eigener Installer hochgeladen werden.`,
     } as PrepareError;
   }
-  if (!availableVersions.includes(requestedVersion)) {
-    throw {
-      status: 400,
-      message: `NeoForge loader version ${requestedVersion} is not available. Available: ${availableVersions.join(', ') || 'none'}`,
-    } as PrepareError;
-  }
-  return requestedVersion;
+  return normalized;
 };
 
 const ensureDir = async (dirPath: string) => fs.mkdir(dirPath, { recursive: true });
@@ -238,7 +240,7 @@ const resolveLoaderVersion = async (
   }
 
   const neoforge = await catalogService.getNeoForgeVersions();
-  return resolveNeoForgeVersionOrThrow(providedVersion, neoforge.versions);
+  return resolveNeoForgeVersionOrThrow(providedVersion, neoforge.versions, neoforge.metadataUrl);
 };
 
 const parsePrepareRequest = (body: {
@@ -264,6 +266,20 @@ const parsePrepareRequest = (body: {
       })
     : undefined;
   return { ...body, requestedLoaderVersion };
+};
+
+export const migrateLegacyNeoForgeInstance = async (instanceId: string, minecraftVersion: string | undefined, loaderVersion: string | undefined, log: (message: string) => Promise<void>) => {
+  if (loaderVersion || !minecraftVersion) return { minecraftVersion, loaderVersion, changed: false };
+  const catalog = await catalogService.getNeoForgeVersions();
+  const legacyVersion = minecraftVersion.trim();
+  if (!catalog.versions.includes(legacyVersion)) return { minecraftVersion, loaderVersion, changed: false };
+  const inferredMinecraft = CatalogService.inferMinecraftVersionFromNeoForge(legacyVersion);
+  await log(`Legacy NeoForge-Konfiguration korrigiert: ${legacyVersion} wird als loader.version übernommen${inferredMinecraft ? `; Minecraft-Zuordnung ${inferredMinecraft}` : ''}.`);
+  await instanceManager.updateInstance(instanceId, {
+    loader: { type: 'neoforge', version: legacyVersion },
+    minecraftVersion: inferredMinecraft ?? undefined,
+  });
+  return { minecraftVersion: inferredMinecraft, loaderVersion: legacyVersion, changed: true };
 };
 
 const prepareFabric = async (
@@ -372,6 +388,39 @@ const prepareForgeLike = async (
   });
 };
 
+const activePrepare = new Set<string>();
+
+router.post('/:id/prepare/upload', jarUpload.single('file'), async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const uploadFile = req.file;
+  let runId: string | null = null;
+  try {
+    const instance = await instanceManager.getInstance(id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+    if (activePrepare.has(id)) return res.status(409).json({ error: 'Prepare läuft bereits für diese Instanz.' });
+    if (!uploadFile) return res.status(400).json({ error: 'file is required' });
+    activePrepare.add(id);
+    runId = prepareEventService.startRun(id);
+    await logPrepare(id, 'Upload gestartet', { phase: 'uploading', data: { size: uploadFile.size, fileName: path.basename(uploadFile.originalname) } });
+    const mode = req.body?.mode === 'installer' ? 'installer' : 'server-jar' as ManualJarMode;
+    const serverType = (req.body?.serverType ?? 'auto') as ManualJarServerType;
+    const overwrite = req.body?.overwrite === 'true' || req.body?.overwrite === true;
+    const resolved = await resolveJavaForInstance(instance, instance.minecraftVersion ?? '', instance.serverType);
+    if (resolved.status === 'needs_java') return res.status(409).json({ error: 'NEEDS_JAVA', recommendedMajor: resolved.requirement.major, requirement: resolved.requirement, candidates: resolved.candidates, reasons: resolved.reasons });
+    const updated = await installManualJar({ instance, uploadPath: uploadFile.path, originalName: uploadFile.originalname, size: uploadFile.size, mode, serverType, overwrite, javaBin: resolved.javaBin || 'java', log: (message, data) => logPrepare(id, message, { phase: message.includes('Installer') ? 'installing' : 'configuring', data }) });
+    await logPrepare(id, 'Manuelle Vorbereitung abgeschlossen', { phase: 'completed' });
+    return res.json({ id, runId: runId ?? undefined, status: 'prepared', instance: updated });
+  } catch (error: any) {
+    if (uploadFile?.path) await fs.rm(uploadFile.path, { force: true }).catch(() => undefined);
+    const status = error?.message === 'ONLY_JAR' ? 400 : error?.status ?? 500;
+    const message = error?.message === 'ONLY_JAR' ? 'Es sind ausschließlich .jar-Dateien erlaubt.' : error?.message || 'Upload prepare failed';
+    await logPrepare(id, `Upload-Vorbereitung fehlgeschlagen: ${message}`, { phase: 'failed', level: 'error', data: { detail: error?.detail } }).catch(() => undefined);
+    return res.status(status).json({ error: message, detail: error?.detail });
+  } finally {
+    activePrepare.delete(id);
+  }
+});
+
 router.post('/:id/prepare', async (req: Request, res: Response) => {
   const { id } = req.params;
   const {
@@ -469,6 +518,8 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Failed to resolve Java runtime' });
   }
 
+  if (activePrepare.has(id)) return res.status(409).json({ error: 'Prepare läuft bereits für diese Instanz.' });
+  activePrepare.add(id);
   runId = prepareEventService.startRun(id);
 
   try {
@@ -515,11 +566,12 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
           requestedLoaderVersion,
         },
       });
+      const legacy = await migrateLegacyNeoForgeInstance(id, minecraftVersion ?? instance.minecraftVersion, requestedLoaderVersion, (message) => logPrepare(id, message));
+      const effectiveMinecraftVersion = minecraftVersion ?? legacy.minecraftVersion;
+      const effectiveLoaderVersion = requestedLoaderVersion ?? legacy.loaderVersion;
       const catalog = await catalogService.getNeoForgeVersions();
-      await logPrepare(id, `Available NeoForge versions from API: ${catalog.versions.join(', ')}`, {
-        data: { availableNeoForgeVersions: catalog.versions },
-      });
-      const resolvedNeoForge = await resolveLoaderVersion(minecraftVersion ?? '', 'neoforge', requestedLoaderVersion);
+      await logPrepare(id, `NeoForge-Katalog geladen`, { data: { versionCount: catalog.versions.length } });
+      const resolvedNeoForge = await resolveLoaderVersion(effectiveMinecraftVersion ?? '', 'neoforge', effectiveLoaderVersion);
       await logPrepare(
         id,
         `NeoForge version match result: sourceField=requestedLoaderVersion requested=${requestedLoaderVersion ?? 'n/a'} resolved=${resolvedNeoForge}`,
@@ -527,7 +579,7 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       await prepareForgeLike(
         id,
         'neoforge',
-        minecraftVersion,
+        effectiveMinecraftVersion,
         resolvedNeoForge,
         overwrite,
         javaBin || 'java',
@@ -644,7 +696,9 @@ router.post('/:id/prepare', async (req: Request, res: Response) => {
       level: 'error',
       data: { detail: error?.detail },
     });
-    return res.status(status).json({ error: message, detail: error?.detail });
+    return res.status(status).json({ error: message, message, detail: error?.detail });
+  } finally {
+    activePrepare.delete(id);
   }
 });
 

@@ -1,3 +1,5 @@
+import { sortVersionsDesc } from '../utils/versionSort';
+
 interface VanillaManifestEntry {
   id: string;
   type: string;
@@ -63,6 +65,19 @@ interface FabricInstallerEntry {
 
 
 export class CatalogService {
+  /**
+   * NeoForge Maven versions do not include the Minecraft version as a separate
+   * artifact coordinate. Current NeoForge versions use a leading major that
+   * tracks the Minecraft minor (21.x => Minecraft 1.21.x, 20.x => 1.20.x,
+   * 26.x => 1.26.x). We only derive that conservative family mapping; versions
+   * that do not match a numeric major are kept unmapped instead of being guessed.
+   */
+  static inferMinecraftVersionFromNeoForge(version: string): string | undefined {
+    const match = version.trim().match(/^(\d+)\./);
+    if (!match) return undefined;
+    return `1.${match[1]}`;
+  }
+
   private vanillaCache: CacheEntry<VanillaManifest> | null = null;
   private paperVersionsCache: CacheEntry<PaperProjectResponse> | null = null;
   private paperBuildsCache = new Map<string, CacheEntry<PaperBuildsResponse>>();
@@ -270,9 +285,27 @@ export class CatalogService {
       throw new Error('No NeoForge versions found');
     }
 
-    const versions = Array.from(new Set(versionMatches));
-    const latest = versions[versions.length - 1];
-    const data = { versions, latest };
+    const versions = sortVersionsDesc(Array.from(new Set(versionMatches)));
+    const loaderVersionsByMinecraft: Record<string, string[]> = {};
+    const unmappedVersions: string[] = [];
+
+    for (const neoForgeVersion of versions) {
+      const minecraftVersion = CatalogService.inferMinecraftVersionFromNeoForge(neoForgeVersion);
+      if (!minecraftVersion) {
+        unmappedVersions.push(neoForgeVersion);
+        continue;
+      }
+      const bucket = loaderVersionsByMinecraft[minecraftVersion] ?? [];
+      bucket.push(neoForgeVersion);
+      loaderVersionsByMinecraft[minecraftVersion] = bucket;
+    }
+
+    for (const minecraftVersion of Object.keys(loaderVersionsByMinecraft)) {
+      loaderVersionsByMinecraft[minecraftVersion] = sortVersionsDesc(loaderVersionsByMinecraft[minecraftVersion]);
+    }
+
+    const latest = versions[0];
+    const data = { versions, loaderVersionsByMinecraft, unmappedVersions, latest, metadataUrl: NEOFORGE_METADATA_URL };
     this.neoforgeCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
     return data;
   }

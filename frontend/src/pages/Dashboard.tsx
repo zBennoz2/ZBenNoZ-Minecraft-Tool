@@ -177,7 +177,7 @@ export function Dashboard() {
     createGame === 'minecraft' &&
     Boolean(createServerType) &&
     ['fabric', 'forge', 'neoforge'].includes(createServerType ?? '')
-  const showLoaderSelect = requiresLoader && createServerType !== 'neoforge' && Boolean(minecraftVersion)
+  const showLoaderSelect = requiresLoader && Boolean(minecraftVersion)
 
   const loaderType = useMemo(() => {
     if (createServerType === 'fabric') return 'fabric'
@@ -393,8 +393,8 @@ export function Dashboard() {
 
       if (requiresLoader && loaderType) {
         const resolvedLoaderVersion = loaderVersion
-        if (createServerType === 'forge' && !resolvedLoaderVersion) {
-          setCreateError({ message: `Bitte wähle eine Forge-Version für Minecraft ${minecraftVersion} aus.` })
+        if ((createServerType === 'forge' || createServerType === 'neoforge') && !resolvedLoaderVersion) {
+          setCreateError({ message: `Bitte wähle eine ${createServerType === 'neoforge' ? 'NeoForge' : 'Forge'}-Version für Minecraft ${minecraftVersion} aus.` })
           return
         }
         if (resolvedLoaderVersion) {
@@ -430,7 +430,6 @@ export function Dashboard() {
     !createName.trim() ||
     !createGame ||
     !createServerType ||
-    (createGame === 'minecraft' && !minecraftVersion) ||
     (createServerType === 'forge' && !loaderVersion) ||
     (showLoaderSelect && loaderOptions.length > 0 && !loaderVersion) ||
     (createGame === 'hytale' &&
@@ -567,7 +566,8 @@ export function Dashboard() {
           const playersText = playersOnline === null ? '—' : `${playersOnline}`
 
           const showRunActions = status === 'running'
-          const startDisabled = isBusy || isStarting || status === 'running'
+          const hasUsableStartup = Boolean(instance.startup && ((instance.startup.mode === 'script' && instance.startup.script) || (instance.startup.mode === 'jar' && instance.serverJar)))
+          const startDisabled = isBusy || isStarting || status === 'running' || !hasUsableStartup
           const stopDisabled = isBusy || status !== 'running'
           const restartDisabled = isBusy || status !== 'running'
           const versionInfo = hytaleVersionsByInstanceId[instance.id]
@@ -624,6 +624,10 @@ export function Dashboard() {
                   <strong>{playersText}</strong>
                 </div>
               </div>
+
+              {!hasUsableStartup ? (
+                <div className="instance-tile__warning">Diese Instanz ist noch nicht vorbereitet. Wähle eine Version aus oder lade im Prepare-Schritt eine eigene JAR-Datei hoch.</div>
+              ) : null}
 
               {metricsError ? (
                 <div className="instance-tile__warning" title={metricsError}>
@@ -801,7 +805,6 @@ export function Dashboard() {
                         setLoaderVersion('')
                         setCreateError(null)
                       }}
-                      required
                     >
                       <option value="" disabled>
                         Select a type
@@ -817,7 +820,7 @@ export function Dashboard() {
 
                 {createGame === 'minecraft' ? (
                   <label className="form__field">
-                    <span>Minecraft Version *</span>
+                    <span>Minecraft Version</span>
                     <select
                       value={minecraftVersion}
                       onChange={(event) => {
@@ -903,7 +906,7 @@ export function Dashboard() {
 
               {showLoaderSelect ? (
                 <label className="form__field">
-                  <span>{createServerType === 'forge' ? 'Forge Version *' : 'Loader Version *'}</span>
+                  <span>{createServerType === 'forge' ? 'Forge Version *' : createServerType === 'neoforge' ? 'NeoForge Version *' : 'Loader Version *'}</span>
                   <select
                     value={loaderVersion}
                     onChange={(event) => setLoaderVersion(event.target.value)}

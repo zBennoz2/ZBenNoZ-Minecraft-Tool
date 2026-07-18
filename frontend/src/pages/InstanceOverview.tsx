@@ -12,6 +12,7 @@ import {
   getInstanceStatus,
   installJava,
   prepareInstance,
+  prepareInstanceUpload,
   streamJavaInstall,
 } from '../api'
 import { apiUrl } from '../config'
@@ -150,6 +151,12 @@ export function InstanceOverview() {
   const [now, setNow] = useState(Date.now())
   const [javaInstall, setJavaInstall] = useState<JavaInstallState | undefined>(undefined)
   const [isPrepareModalOpen, setIsPrepareModalOpen] = useState(false)
+  const [installMethod, setInstallMethod] = useState<'catalog' | 'upload'>('catalog')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadMode, setUploadMode] = useState<'installer' | 'server-jar'>('server-jar')
+  const [uploadServerType, setUploadServerType] = useState('auto')
+  const [uploadOverwrite, setUploadOverwrite] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const javaInstallStreamRef = useRef<EventSource | null>(null)
   const prepareEventSourceRef = useRef<EventSource | null>(null)
@@ -185,6 +192,18 @@ export function InstanceOverview() {
     setPrepareState(state)
     setPrepareMessage(message)
     setPrepareErrorCode(errorCode)
+  }
+
+  const triggerUploadPrepare = async () => {
+    if (!id || !uploadFile || !instance) return
+    if (!uploadFile.name.toLowerCase().endsWith('.jar')) {
+      updatePrepareState('error', 'Es sind ausschließlich .jar-Dateien erlaubt.')
+      return
+    }
+    updatePrepareState('preparing')
+    const result = await prepareInstanceUpload(id, { file: uploadFile, mode: uploadMode, serverType: uploadServerType as any, overwrite: uploadOverwrite, onProgress: setUploadProgress })
+    updatePrepareState(result.success ? 'prepared' : 'error', result.message, result.errorCode)
+    await refreshStatus()
   }
 
   const triggerPrepare = async (currentInstance: Instance) => {
@@ -462,6 +481,7 @@ export function InstanceOverview() {
   const playersText = playersOnline === null ? '—' : `${playersOnline}`
   const metricsUnavailable = Boolean(metricsError) || metrics?.metricsAvailable === false
   const prepareDisabled = prepareState === 'preparing'
+  const hasStartupConfig = Boolean(instance.startup && ((instance.startup.mode === 'script' && instance.startup.script) || (instance.startup.mode === 'jar' && instance.serverJar)))
   const hasDownloaderUrlError = prepareErrorCode === 'HYTALE_DOWNLOADER_URL_MISSING'
 
   return (
@@ -517,7 +537,7 @@ export function InstanceOverview() {
             <button
               className="btn"
               disabled={prepareDisabled}
-              onClick={() => triggerPrepare(instance)}
+              onClick={() => setIsPrepareModalOpen(true)}
             >
               {prepareState === 'preparing' ? 'Preparing…' : 'Prepare'}
             </button>
@@ -530,6 +550,12 @@ export function InstanceOverview() {
               </button>
             ) : null}
           </div>
+
+          {!hasStartupConfig ? (
+            <div className="alert alert--muted" style={{ marginTop: 12 }}>
+              Diese Instanz ist noch nicht vorbereitet. Wähle eine Version aus oder lade im Prepare-Schritt eine eigene JAR-Datei hoch.
+            </div>
+          ) : null}
 
           {prepareState === 'preparing' ? (
             <div className="alert alert--muted" style={{ marginTop: 12 }}>
@@ -629,6 +655,29 @@ export function InstanceOverview() {
                 >
                   Retry Prepare
                 </button>
+              </div>
+            </div>
+          ) : null}
+
+
+          {isPrepareModalOpen ? (
+            <div className="modal-backdrop" role="presentation" onClick={() => setIsPrepareModalOpen(false)}>
+              <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+                <div className="modal__header"><h2>Instanz vorbereiten</h2><button className="btn btn--ghost" onClick={() => setIsPrepareModalOpen(false)}>Schließen</button></div>
+                <div className="form">
+                  <label className="form__field"><span>Installationsart</span><select value={installMethod} onChange={(e) => setInstallMethod(e.target.value as 'catalog' | 'upload')}><option value="catalog">Automatisch aus Katalog installieren</option><option value="upload">Eigene JAR-Datei hochladen</option></select></label>
+                  {installMethod === 'catalog' ? <button className="btn" disabled={prepareDisabled} onClick={() => { setIsPrepareModalOpen(false); void triggerPrepare(instance) }}>Automatische Vorbereitung starten</button> : (
+                    <>
+                      <label className="form__field"><span>JAR-Datei</span><input type="file" accept=".jar" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} /></label>
+                      {uploadFile ? <div className="page__hint">{uploadFile.name} • {(uploadFile.size / 1024 / 1024).toFixed(1)} MB</div> : null}
+                      <label className="form__field"><span>JAR-Typ</span><select value={uploadMode} onChange={(e) => setUploadMode(e.target.value as 'installer' | 'server-jar')}><option value="installer">Installer ausführen</option><option value="server-jar">Direkt als Server-JAR verwenden</option></select></label>
+                      {uploadMode === 'installer' ? <label className="form__field"><span>Server-Typ</span><select value={uploadServerType} onChange={(e) => setUploadServerType(e.target.value)}><option value="auto">Automatisch erkennen</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option><option value="fabric">Fabric</option></select></label> : null}
+                      <label className="form__field"><span><input type="checkbox" checked={uploadOverwrite} onChange={(e) => setUploadOverwrite(e.target.checked)} /> Vorhandene Dateien überschreiben</span></label>
+                      {uploadProgress ? <div className="page__hint">Upload: {uploadProgress}%</div> : null}
+                      <button className="btn" disabled={prepareDisabled || !uploadFile} onClick={triggerUploadPrepare}>Upload bewusst starten</button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}

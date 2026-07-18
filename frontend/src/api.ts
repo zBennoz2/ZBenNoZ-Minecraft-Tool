@@ -63,6 +63,7 @@ export interface Instance {
   backups?: BackupSettings
   serverPort?: number | null
   hytale?: HytaleConfig
+  serverJar?: string
 }
 
 export interface SleepSettings {
@@ -206,6 +207,14 @@ export interface PrepareInstanceOptions {
   hytaleImportAssetsPath?: string
 }
 
+export interface ManualJarPrepareOptions {
+  file: File
+  mode: 'installer' | 'server-jar'
+  serverType: ServerType | 'custom' | 'auto'
+  overwrite: boolean
+  onProgress?: (percent: number) => void
+}
+
 export interface PrepareInstanceResult {
   success: boolean
   message?: string
@@ -233,7 +242,13 @@ export type InstanceUpdatePayload = Partial<
 >
 
 export interface HytaleAuthStatus {
-  state: 'idle' | 'needs_auth' | 'waiting_for_auth' | 'authenticated' | 'downloading' | 'extracting' | 'configured'
+  state: 'idle' | 'needs_auth' | 'waiting_for_auth' | 'authenticated' | 'uploading'
+  | 'validating'
+  | 'installing'
+  | 'configuring'
+  | 'completed'
+  | 'failed'
+  | 'downloading' | 'extracting' | 'configured'
   authenticated: boolean
   deviceUrl?: string
   userCode?: string
@@ -252,6 +267,12 @@ export type PreparePhase =
   | 'needs_auth'
   | 'waiting_for_auth'
   | 'authenticated'
+  | 'uploading'
+  | 'validating'
+  | 'installing'
+  | 'configuring'
+  | 'completed'
+  | 'failed'
   | 'downloading'
   | 'extracting'
   | 'configured'
@@ -654,6 +675,31 @@ export async function prepareInstance(
   }
 }
 
+export async function prepareInstanceUpload(id: string, options: ManualJarPrepareOptions): Promise<PrepareInstanceResult> {
+  const form = new FormData()
+  form.append('file', options.file)
+  form.append('mode', options.mode)
+  form.append('serverType', options.serverType)
+  form.append('overwrite', String(options.overwrite))
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl(`/api/instances/${id}/prepare/upload`))
+    xhr.withCredentials = true
+    if (API_KEY) xhr.setRequestHeader('X-Api-Key', API_KEY)
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) options.onProgress?.(Math.round((event.loaded / event.total) * 100))
+    }
+    xhr.onload = () => {
+      let body: { message?: string; error?: string } = {}
+      try { body = JSON.parse(xhr.responseText || '{}') } catch { body = {} }
+      if (xhr.status >= 200 && xhr.status < 300) resolve({ success: true, message: body.message ?? 'Prepared successfully' })
+      else resolve({ success: false, message: body.message ?? body.error ?? `Request failed with status ${xhr.status}`, errorCode: body.error })
+    }
+    xhr.onerror = () => resolve({ success: false, message: 'Upload fehlgeschlagen' })
+    xhr.send(form)
+  })
+}
+
 export async function deleteInstance(id: string): Promise<void> {
   await fetchApi<void>(`/api/instances/${id}`, { method: 'DELETE' })
 }
@@ -768,8 +814,10 @@ export async function getCatalogVersions(serverType: ServerType): Promise<Catalo
       return { versions: sortVersionsDesc(versions), loaderVersionsByMinecraft }
     }
     case 'neoforge': {
-      const result = await fetchApi<{ versions?: string[] }>('/api/catalog/neoforge/versions')
-      return { versions: sortVersionsDesc(result.versions ?? []) }
+      const result = await fetchApi<{ versions?: string[]; loaderVersionsByMinecraft?: Record<string, string[]> }>('/api/catalog/neoforge/versions')
+      const byMc = result.loaderVersionsByMinecraft ?? {}
+      const versions = Object.keys(byMc).length ? Object.keys(byMc) : []
+      return { versions: sortVersionsDesc(versions), loaderVersionsByMinecraft: byMc, loaderVersions: sortVersionsDesc(result.versions ?? []) }
     }
     default:
       return { versions: [] }

@@ -33,7 +33,7 @@ test('resolveNeoForgeVersionOrThrow rejects unknown version instead of falling b
       typeof error === 'object' &&
       error !== null &&
       'message' in error &&
-      String(error.message).includes('NeoForge loader version 21.1.999 is not available'),
+      String(error.message).includes('Die NeoForge-Version 21.1.999 ist im aktuellen Katalog nicht verfügbar'),
   );
 });
 
@@ -46,7 +46,7 @@ test('resolveNeoForgeVersionOrThrow rejects missing neoforge version', () => {
       typeof error === 'object' &&
       error !== null &&
       'message' in error &&
-      String(error.message).includes('NeoForge loader version is required'),
+      String(error.message).includes('Bitte wähle eine NeoForge-Version aus'),
   );
 });
 
