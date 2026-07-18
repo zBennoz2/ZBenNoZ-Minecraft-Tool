@@ -1,15 +1,72 @@
 import { Request, Response, Router } from 'express';
 import { InstanceManager } from '../core/InstanceManager';
-import { InstanceConfig, ServerType } from '../core/types';
+import { InstanceConfig, LoaderType, ServerType } from '../core/types';
 import { resolveServerPortForInstance } from '../services/serverProperties.service';
 import { deleteInstanceWithCleanup } from '../services/instanceDeletion.service';
 import { getLicenseStatus } from '../services/licenseStatus.service';
 import { requireAdmin, requireResourceAdmin } from './authz';
 import { localUsersService } from '../services/localUsers.service';
+import { CatalogService } from '../core/CatalogService';
 
 const router = Router();
 const instanceManager = new InstanceManager();
+const catalogService = new CatalogService();
 
+const normalizeOptionalVersionInput = (value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (typeof value === 'object') {
+    const asObject = value as Record<string, unknown>;
+    const candidate = asObject.value ?? asObject.version ?? asObject.id;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+  }
+  return undefined;
+};
+
+const resolveCreateLoader = async (
+  serverType: ServerType,
+  minecraftVersion: string | undefined,
+  loader: InstanceConfig['loader'] | undefined,
+  forgeVersion: unknown,
+  neoforgeVersion: unknown,
+): Promise<InstanceConfig['loader'] | undefined> => {
+  const loaderObjectVersion = normalizeOptionalVersionInput(loader?.version);
+
+  if (serverType === 'forge') {
+    const selectedForgeVersion = normalizeOptionalVersionInput(forgeVersion) ?? loaderObjectVersion;
+    if (!minecraftVersion?.trim()) {
+      throw { status: 400, message: 'minecraftVersion is required for Forge instances' };
+    }
+    if (!selectedForgeVersion) {
+      throw { status: 400, message: `Bitte wähle eine Forge-Version für Minecraft ${minecraftVersion} aus.` };
+    }
+
+    const catalog = await catalogService.getForgeVersions();
+    const available = catalog.loaderVersionsByMinecraft?.[minecraftVersion] ?? [];
+    if (!available.includes(selectedForgeVersion)) {
+      throw {
+        status: 400,
+        message: `Forge-Version ${selectedForgeVersion} ist für Minecraft ${minecraftVersion} nicht verfügbar.`,
+        detail: `Verfügbare Forge-Versionen: ${available.join(', ') || 'keine'}`,
+      };
+    }
+
+    return { type: 'forge' as LoaderType, version: selectedForgeVersion };
+  }
+
+  if (serverType === 'neoforge') {
+    const selectedNeoForgeVersion = normalizeOptionalVersionInput(neoforgeVersion) ?? loaderObjectVersion;
+    return selectedNeoForgeVersion ? { type: 'neoforge' as LoaderType, version: selectedNeoForgeVersion } : loader;
+  }
+
+  return loader;
+};
 
 const RESOURCE_SETTING_KEYS = new Set(['memory', 'startup', 'java', 'javaPath', 'nogui']);
 const containsResourceChange = (payload: unknown) => {
@@ -75,11 +132,13 @@ router.put('/:id', async (req: Request, res: Response, next) => {
 });
 
 router.post('/', requireAdmin, async (req: Request, res: Response) => {
-  const { name, serverType, minecraftVersion, loader, hytale } = req.body as {
+  const { name, serverType, minecraftVersion, loader, forgeVersion, neoforgeVersion, hytale } = req.body as {
     name?: string;
     serverType?: ServerType;
     minecraftVersion?: string;
     loader?: InstanceConfig['loader'];
+    forgeVersion?: unknown;
+    neoforgeVersion?: unknown;
     hytale?: InstanceConfig['hytale'];
   };
 
@@ -110,17 +169,27 @@ router.post('/', requireAdmin, async (req: Request, res: Response) => {
       });
     }
 
+    const resolvedLoader = await resolveCreateLoader(
+      serverType,
+      minecraftVersion,
+      loader,
+      forgeVersion,
+      neoforgeVersion,
+    );
+
     const created = await instanceManager.createInstance({
       name,
       serverType,
       minecraftVersion,
-      loader,
+      loader: resolvedLoader,
       hytale,
     });
     res.status(201).json(created);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating instance', error);
-    res.status(500).json({ error: 'Failed to create instance' });
+    const status = error?.status ?? 500;
+    const message = error?.message ?? 'Failed to create instance';
+    res.status(status).json({ error: message, message, detail: error?.detail });
   }
 });
 
