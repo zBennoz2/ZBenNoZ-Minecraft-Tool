@@ -376,6 +376,7 @@ const buildFriendlyMessage = (details: ApiErrorDetails) => {
     SESSION_COOKIE_MISSING: 'Das Session-Cookie wurde nicht übertragen.',
     SESSION_NOT_FOUND: 'Die Sitzung wurde nicht gefunden.',
     SESSION_EXPIRED: 'Die Sitzung ist abgelaufen.',
+    USER_NOT_FOUND: 'Der Benutzer der Sitzung wurde nicht gefunden.',
   }
   if (details.errorCode && sessionMessages[details.errorCode]) return sessionMessages[details.errorCode]
   switch (details.status) {

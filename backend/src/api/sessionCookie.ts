@@ -15,11 +15,14 @@ const configuredSecureMode = (): SecureCookieMode => {
 
 /** Returns whether this individual request reached the browser over HTTPS. */
 export const isSecureRequest = (req: Request): boolean => {
-  if (req.secure === true) return true
-
   const forwardedProto = req.headers['x-forwarded-proto']
   const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto
-  return typeof proto === 'string' && proto.split(',')[0].trim().toLowerCase() === 'https'
+
+  if (typeof proto === 'string') {
+    return proto.split(',')[0].trim().toLowerCase() === 'https'
+  }
+
+  return req.secure
 }
 
 /**

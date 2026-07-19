@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import catalogRouter from './api/catalog';
@@ -29,92 +28,31 @@ import { localUsersService } from './services/localUsers.service';
 import pkg from '../package.json';
 
 const app = express();
+// Cloudflare sends X-Forwarded-Proto; trust its first proxy hop so req.secure works.
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT) || 3001;
 
 const resolveUiDistPath = () => {
-  const envPath = process.env.UI_DIST_PATH;
-  if (envPath) {
-    return path.resolve(envPath);
-  }
+  if (process.env.UI_DIST_PATH) return path.resolve(process.env.UI_DIST_PATH);
 
-  const defaultPath = path.resolve(process.cwd(), 'frontend', 'dist');
-  if (fs.existsSync(defaultPath)) {
-    return defaultPath;
-  }
-
-  const legacyPath = path.resolve(process.cwd(), 'backend', 'frontend', 'dist');
-  if (fs.existsSync(legacyPath)) {
-    return legacyPath;
-  }
-
-  return defaultPath;
+  // The compiled server is backend/dist, making this independent of cwd.
+  const projectFrontendDist = path.resolve(__dirname, '../../frontend/dist');
+  const packagedFrontendDist = path.resolve(__dirname, '../frontend/dist');
+  const candidates = [projectFrontendDist, packagedFrontendDist, path.resolve(process.cwd(), 'frontend/dist')];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? projectFrontendDist;
 };
 
 const STATIC_DIR = resolveUiDistPath();
 const SPA_ENTRYPOINT = path.join(STATIC_DIR, 'index.html');
-const ASSETS_DIR = path.join(STATIC_DIR, 'assets');
-
-const envAllowedOrigins = [process.env.FRONTEND_ORIGIN, process.env.ALLOWED_ORIGINS]
-  .filter(Boolean)
-  .join(',')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-// Credentialed CORS must only reflect origins explicitly configured by the operator.
-const allowedOrigins = Array.from(new Set(envAllowedOrigins));
-
-const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
-const allowedHeaders = ['Content-Type', 'Authorization', 'X-Api-Key'];
-
-type CorsCallback = (
-  err: Error | null,
-  options?: {
-    origin?: boolean;
-    methods?: string[];
-    allowedHeaders?: string[];
-    credentials?: boolean;
-  },
-) => void;
-
 const backendVersion = pkg.version || '0.0.0';
-
-const corsOptionsDelegate = (req: express.Request, callback: CorsCallback) => {
-  const origin = req.header('Origin') || undefined;
-
-  if (!origin) {
-    return callback(null, {
-      origin: true,
-      methods: allowedMethods,
-      allowedHeaders,
-      credentials: true,
-    });
-  }
-
-  const isWhitelisted = allowedOrigins.includes(origin);
-
-  if (isWhitelisted) {
-    return callback(null, {
-      origin: true,
-      methods: allowedMethods,
-      allowedHeaders,
-      credentials: true,
-    });
-  }
-
-  return callback(new Error('Not allowed by CORS'));
-};
 
 app.use(express.json());
 
 const uiDistExists = fs.existsSync(STATIC_DIR);
 const uiIndexExists = fs.existsSync(SPA_ENTRYPOINT);
-const uiAssetsExists = fs.existsSync(ASSETS_DIR);
 
 console.log(`[UI] Serving from: ${STATIC_DIR}`);
 console.log(`[UI] index.html present: ${uiIndexExists}`);
-console.log(`[UI] assets directory present: ${uiAssetsExists}`);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, version: backendVersion });
@@ -124,18 +62,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', message: 'Minecraft Panel Backend Phase 4A' });
 });
 
-if (uiDistExists) {
-  app.use('/assets', express.static(ASSETS_DIR));
-  app.use(express.static(STATIC_DIR));
-  console.log('[Security] Public routes: /health, /api/health, /assets/* and other static files.');
-} else {
-  console.warn(`Static UI path not found: ${STATIC_DIR}`);
-}
-
 const apiRouter = express.Router();
-
-apiRouter.options('*', cors(corsOptionsDelegate));
-apiRouter.use(cors(corsOptionsDelegate));
 
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/license', licenseRouter);
@@ -187,28 +114,28 @@ apiRouter.use('/instances', hytaleRouter);
 app.use('/api', apiRouter);
 
 if (uiDistExists) {
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) {
-      return next();
-    }
-
-    if (req.path.includes('.')) {
-      return next();
-    }
-
-    if (!fs.existsSync(SPA_ENTRYPOINT)) {
-      return res.status(404).send('UI entrypoint not found');
-    }
-
-    return res.sendFile(SPA_ENTRYPOINT);
-  });
+  app.use(express.static(STATIC_DIR));
+  console.log('[UI] Frontend and API are served from the same origin.');
+} else {
+  console.warn(`[UI] Frontend build not found at ${STATIC_DIR}. Run npm run build before npm start.`);
 }
 
-app.use((err: Error, _req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (err?.message === 'Not allowed by CORS') {
-    return res.status(403).json({ error: 'Origin not allowed' });
-  }
+// An unknown API path is always JSON, never the SPA entrypoint.
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API_NOT_FOUND', message: 'API route not found.' }));
 
+// Support client-side routes after a browser refresh and make a missing build actionable.
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  if (!uiIndexExists) {
+    return res.status(503).type('text/plain').send(`Frontend build not found at ${STATIC_DIR}. Run npm run build before starting the server.`);
+  }
+  if (req.path.includes('.')) {
+    return res.status(404).type('text/plain').send('Frontend asset not found. Run npm run build to regenerate the frontend.');
+  }
+  return res.sendFile(SPA_ENTRYPOINT);
+});
+
+app.use((err: Error, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   return next(err);
 });
 

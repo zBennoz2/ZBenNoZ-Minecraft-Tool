@@ -8,6 +8,29 @@ const request = (secure: boolean, forwardedProto?: string): Request => ({
   headers: forwardedProto ? { 'x-forwarded-proto': forwardedProto } : {},
 } as Request)
 
+
+test('defaults work without environment configuration for HTTP and Cloudflare HTTPS', () => {
+  const secure = process.env.SESSION_COOKIE_SECURE
+  const sameSite = process.env.SESSION_COOKIE_SAME_SITE
+  const domain = process.env.SESSION_COOKIE_DOMAIN
+  try {
+    delete process.env.SESSION_COOKIE_SECURE
+    delete process.env.SESSION_COOKIE_SAME_SITE
+    delete process.env.SESSION_COOKIE_DOMAIN
+    assert.equal(getSessionCookieOptions(request(false)).secure, false)
+    assert.equal(getSessionCookieOptions(request(false, 'https')).secure, true)
+    assert.equal(getSessionCookieOptions(request(false)).sameSite, 'lax')
+    assert.equal(getSessionCookieOptions(request(false)).domain, undefined)
+  } finally {
+    if (secure === undefined) delete process.env.SESSION_COOKIE_SECURE
+    else process.env.SESSION_COOKIE_SECURE = secure
+    if (sameSite === undefined) delete process.env.SESSION_COOKIE_SAME_SITE
+    else process.env.SESSION_COOKIE_SAME_SITE = sameSite
+    if (domain === undefined) delete process.env.SESSION_COOKIE_DOMAIN
+    else process.env.SESSION_COOKIE_DOMAIN = domain
+  }
+})
+
 test('auto mode sets Secure only for HTTPS and Cloudflare-forwarded HTTPS requests', () => {
   const previous = process.env.SESSION_COOKIE_SECURE
   process.env.SESSION_COOKIE_SECURE = 'auto'
