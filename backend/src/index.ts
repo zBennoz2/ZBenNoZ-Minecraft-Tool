@@ -55,13 +55,6 @@ const STATIC_DIR = resolveUiDistPath();
 const SPA_ENTRYPOINT = path.join(STATIC_DIR, 'index.html');
 const ASSETS_DIR = path.join(STATIC_DIR, 'assets');
 
-const defaultAllowedOrigins = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:3001',
-  'http://127.0.0.1:3001',
-];
-
 const envAllowedOrigins = [process.env.FRONTEND_ORIGIN, process.env.ALLOWED_ORIGINS]
   .filter(Boolean)
   .join(',')
@@ -69,7 +62,8 @@ const envAllowedOrigins = [process.env.FRONTEND_ORIGIN, process.env.ALLOWED_ORIG
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envAllowedOrigins]));
+// Credentialed CORS must only reflect origins explicitly configured by the operator.
+const allowedOrigins = Array.from(new Set(envAllowedOrigins));
 
 const allowedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 const allowedHeaders = ['Content-Type', 'Authorization', 'X-Api-Key'];
@@ -88,7 +82,6 @@ const backendVersion = pkg.version || '0.0.0';
 
 const corsOptionsDelegate = (req: express.Request, callback: CorsCallback) => {
   const origin = req.header('Origin') || undefined;
-  const host = req.headers.host;
 
   if (!origin) {
     return callback(null, {
@@ -101,17 +94,7 @@ const corsOptionsDelegate = (req: express.Request, callback: CorsCallback) => {
 
   const isWhitelisted = allowedOrigins.includes(origin);
 
-  let isSameHost = false;
-  try {
-    const parsedOrigin = new URL(origin);
-    isSameHost = !!host && parsedOrigin.host === host;
-  } catch (error) {
-    // Ignore invalid origins and fall through to disallow unless explicitly whitelisted or file protocol
-  }
-
-  const isElectron = origin.startsWith('file://');
-
-  if (isWhitelisted || isSameHost || isElectron) {
+  if (isWhitelisted) {
     return callback(null, {
       origin: true,
       methods: allowedMethods,

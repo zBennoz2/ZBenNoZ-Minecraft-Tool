@@ -3,39 +3,14 @@ import { login as remoteLogin, resetSession } from '../services/auth.service'
 import { clearLicenseStatusCache, getCachedLicenseStatus, getGlobalLicenseStatus, getLicenseStatus } from '../services/licenseStatus.service'
 import { localUsersService, verifyPassword, type SafeUser } from '../services/localUsers.service'
 import { getSessionToken } from './authz'
+import { getSessionCookieOptions, isSecureRequest } from './sessionCookie'
 
 const router = express.Router()
 const cookieName = 'zbn_session'
-type SameSite = 'lax' | 'none' | 'strict'
-
-const isHttpsRequest = (req: express.Request) =>
-  req.secure || req.header('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase() === 'https'
-
-const configuredSameSite = (): SameSite => {
-  const value = process.env.SESSION_COOKIE_SAME_SITE?.trim().toLowerCase()
-  if (value === 'lax' || value === 'none' || value === 'strict') return value
-  // A separately hosted panel must opt in via SESSION_COOKIE_SAME_SITE=none.
-  return 'lax'
+const setSessionCookie = (req: express.Request, res: express.Response, token: string, expiresAt: string) => {
+  res.cookie(cookieName, token, getSessionCookieOptions(req, expiresAt))
 }
-
-const cookieOptions = (expiresAt?: string): express.CookieOptions => {
-  const sameSite = configuredSameSite()
-  const domain = process.env.SESSION_COOKIE_DOMAIN?.trim()
-  const secure = process.env.SESSION_COOKIE_SECURE?.trim().toLowerCase() !== 'false'
-  return {
-    httpOnly: true,
-    secure,
-    sameSite,
-    path: '/',
-    ...(domain ? { domain } : {}),
-    ...(expiresAt ? { expires: new Date(expiresAt) } : {}),
-  }
-}
-
-const setSessionCookie = (res: express.Response, token: string, expiresAt: string) => {
-  res.cookie(cookieName, token, cookieOptions(expiresAt))
-}
-const clearSessionCookie = (res: express.Response) => res.clearCookie(cookieName, cookieOptions())
+const clearSessionCookie = (req: express.Request, res: express.Response) => res.clearCookie(cookieName, getSessionCookieOptions(req))
 const safeUser = (user: any) => user ? { id: user.id, username: user.username, name: user.username, role: user.role, isAdmin: user.role === 'admin', createdAt: user.createdAt, updatedAt: user.updatedAt } : undefined
 const authPayload = (user: SafeUser, extra: Record<string, unknown> = {}) => ({
   authenticated: true,
@@ -59,7 +34,7 @@ const sessionErrorMessage: Record<string, string> = {
 const logSession = (event: string, req: express.Request, details: Record<string, unknown>) => {
   console.info(`[auth] ${event}`, {
     ...details,
-    publicHttps: isHttpsRequest(req),
+    publicHttps: isSecureRequest(req),
     origin: req.header('origin') || undefined,
   })
 }
@@ -81,14 +56,15 @@ const getCurrentSession = async (req: express.Request, res: express.Response) =>
 
 const createAndSetSession = async (req: express.Request, res: express.Response, user: SafeUser, remember: boolean) => {
   const session = await localUsersService.createSession(user.id, remember)
-  setSessionCookie(res, session.token, session.expiresAt)
+  setSessionCookie(req, res, session.token, session.expiresAt)
+  const cookieOptions = getSessionCookieOptions(req)
   logSession('Login-Session erstellt', req, {
     sessionCreated: true,
     userId: user.id,
     role: user.role,
     cookieSet: true,
-    cookieSecure: cookieOptions().secure,
-    cookieSameSite: cookieOptions().sameSite,
+    cookieSecure: cookieOptions.secure,
+    cookieSameSite: cookieOptions.sameSite,
   })
 }
 
@@ -121,6 +97,6 @@ router.post('/login', async (req, res) => {
   await createAndSetSession(req, res, user, Boolean(remember))
   return res.json({ ok: true, ...authPayload(user, { license }) })
 })
-router.post('/logout', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); clearSessionCookie(res); res.json({ ok: true }) })
-router.post('/reset', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); clearSessionCookie(res); const result = await resetSession(); const licenseCache = clearLicenseStatusCache(); res.json({ ok: true, ...result, licenseCacheDeleted: licenseCache.deleted }) })
+router.post('/logout', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); clearSessionCookie(req, res); res.json({ ok: true }) })
+router.post('/reset', async (req, res) => { await localUsersService.destroySession(getSessionToken(req)); clearSessionCookie(req, res); const result = await resetSession(); const licenseCache = clearLicenseStatusCache(); res.json({ ok: true, ...result, licenseCacheDeleted: licenseCache.deleted }) })
 export default router

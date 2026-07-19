@@ -418,13 +418,13 @@ export async function fetchApi<T>(path: string, options: FetchApiOptions = {}): 
   console.info('[api] Request', url, { method })
 
   const response = await fetch(url, {
+    ...requestOptions,
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),
       ...Object.fromEntries(headers.entries()),
     },
-    ...requestOptions,
   })
 
   let payload: unknown
@@ -628,6 +628,7 @@ export async function prepareInstance(
 ): Promise<PrepareInstanceResult> {
   const response = await fetch(apiUrl(`/api/instances/${id}/prepare`), {
     method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(API_KEY ? { 'X-Api-Key': API_KEY } : {}),

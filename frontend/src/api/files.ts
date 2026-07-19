@@ -45,7 +45,7 @@ const request = (path: string, options?: RequestInit) => {
   const url = apiUrl(path)
   // eslint-disable-next-line no-console
   console.log('[api] Requesting', url)
-  return fetch(url, options)
+  return fetch(url, { ...options, credentials: 'include' })
 }
 
 const handleResponse = async <T>(response: Response, fallbackMessage: string): Promise<T> => {

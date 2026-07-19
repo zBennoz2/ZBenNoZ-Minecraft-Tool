@@ -161,13 +161,13 @@ X-Device-Arch: x64
 
 ## Session-Cookie hinter Cloudflare / Reverse Proxy
 
-Das Backend vertraut dem ersten Reverse-Proxy-Hop (`trust proxy = 1`) und erkennt öffentliche HTTPS-Verbindungen über `req.secure` sowie `X-Forwarded-Proto`. Die lokale Browser-Session wird ausschließlich als `zbn_session` mit `HttpOnly`, `Path=/` und standardmäßig `Secure` gesetzt. Session-Tokens werden weder geloggt noch in API-Antworten ausgegeben.
+Das Backend vertraut dem ersten Reverse-Proxy-Hop (`trust proxy = 1`) und erkennt öffentliche HTTPS-Verbindungen über `req.secure` sowie den ersten Wert von `X-Forwarded-Proto`. `SESSION_COOKIE_SECURE=auto` ist der Standard: Öffentliche HTTPS-Anfragen erhalten ein `Secure`-Cookie, lokale HTTP-Anfragen nicht. Das Setzen und Löschen verwendet dieselben requestbasierten Attribute, damit ein Logout genau die passende Browser-Session löscht. Session-Tokens werden weder geloggt noch in API-Antworten ausgegeben.
 
 Für ein Panel und eine API auf derselben **Site** (auch unterschiedliche Subdomains) wird die sichere Vorgabe verwendet:
 
 ```env
-FRONTEND_ORIGIN=https://panel.example.com
-SESSION_COOKIE_SECURE=true
+ALLOWED_ORIGINS=https://panel.example.com,http://192.168.178.50:5173,http://localhost:5173
+SESSION_COOKIE_SECURE=auto
 SESSION_COOKIE_SAME_SITE=lax
 # Nur setzen, falls ein Cookie bewusst für mehrere Subdomains geteilt werden soll:
 # SESSION_COOKIE_DOMAIN=.example.com
@@ -176,11 +176,11 @@ SESSION_COOKIE_SAME_SITE=lax
 Wenn Panel und API tatsächlich cross-site sind, muss der Browser das Cookie mit `SameSite=None` erhalten:
 
 ```env
-FRONTEND_ORIGIN=https://panel.example.com
+ALLOWED_ORIGINS=https://panel.example.com
 SESSION_COOKIE_SECURE=true
 SESSION_COOKIE_SAME_SITE=none
 ```
 
-Mehrere ausdrücklich erlaubte Origins werden kommagetrennt in `ALLOWED_ORIGINS` angegeben. Lokale Entwicklung ist bereits für `http://localhost:5173`, `http://127.0.0.1:5173` sowie Port 3001 zugelassen. Für reines HTTP in der lokalen Entwicklung kann **nur dort** `SESSION_COOKIE_SECURE=false` gesetzt werden. Es wird keine beliebige Origin und keine feste Cookie-Domain erlaubt.
+Mehrere ausdrücklich erlaubte Origins werden kommagetrennt in `ALLOWED_ORIGINS` angegeben; es gibt keine implizit erlaubten Browser-Origin-Defaults. Credentialed CORS antwortet nur für diese Origins und nie mit `Access-Control-Allow-Origin: *`. `SESSION_COOKIE_SECURE` akzeptiert `auto` (Standard), `true` oder `false`; `auto` ermöglicht gleichzeitig lokalen HTTP- und öffentlichen HTTPS-Zugriff. Es wird keine beliebige Origin und keine feste Cookie-Domain erlaubt.
 
 Nach jedem Login prüft das Frontend `GET /api/auth/session`, bevor es Erfolg meldet. Die Antwort muss `authenticated: true`, `role: "admin"` und `isAdmin: true` enthalten. Bei fehlendem Cookie oder einer ungültigen Sitzung liefern die Endpunkte eindeutige Codes (`SESSION_COOKIE_MISSING`, `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `USER_NOT_FOUND`, `USER_DISABLED`).
