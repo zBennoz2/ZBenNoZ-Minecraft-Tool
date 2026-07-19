@@ -158,3 +158,29 @@ X-Device-Arch: x64
 | **Eingeloggt & aktiv** | App ist freigeschaltet. |
 | **Gesperrt (inaktiv)** | Lizenz abgelaufen/gesperrt/keine Zuweisung/zu viele Geräte. Buttons: „Erneut prüfen“, „Abmelden“. |
 | **Offline/Grace** | Letzter erfolgreicher Check < Grace-Window, UI zeigt Offline-Status, Funktionen bleiben nutzbar. |
+
+## Session-Cookie hinter Cloudflare / Reverse Proxy
+
+Das Backend vertraut dem ersten Reverse-Proxy-Hop (`trust proxy = 1`) und erkennt öffentliche HTTPS-Verbindungen über `req.secure` sowie `X-Forwarded-Proto`. Die lokale Browser-Session wird ausschließlich als `zbn_session` mit `HttpOnly`, `Path=/` und standardmäßig `Secure` gesetzt. Session-Tokens werden weder geloggt noch in API-Antworten ausgegeben.
+
+Für ein Panel und eine API auf derselben **Site** (auch unterschiedliche Subdomains) wird die sichere Vorgabe verwendet:
+
+```env
+FRONTEND_ORIGIN=https://panel.example.com
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAME_SITE=lax
+# Nur setzen, falls ein Cookie bewusst für mehrere Subdomains geteilt werden soll:
+# SESSION_COOKIE_DOMAIN=.example.com
+```
+
+Wenn Panel und API tatsächlich cross-site sind, muss der Browser das Cookie mit `SameSite=None` erhalten:
+
+```env
+FRONTEND_ORIGIN=https://panel.example.com
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAME_SITE=none
+```
+
+Mehrere ausdrücklich erlaubte Origins werden kommagetrennt in `ALLOWED_ORIGINS` angegeben. Lokale Entwicklung ist bereits für `http://localhost:5173`, `http://127.0.0.1:5173` sowie Port 3001 zugelassen. Für reines HTTP in der lokalen Entwicklung kann **nur dort** `SESSION_COOKIE_SECURE=false` gesetzt werden. Es wird keine beliebige Origin und keine feste Cookie-Domain erlaubt.
+
+Nach jedem Login prüft das Frontend `GET /api/auth/session`, bevor es Erfolg meldet. Die Antwort muss `authenticated: true`, `role: "admin"` und `isAdmin: true` enthalten. Bei fehlendem Cookie oder einer ungültigen Sitzung liefern die Endpunkte eindeutige Codes (`SESSION_COOKIE_MISSING`, `SESSION_NOT_FOUND`, `SESSION_EXPIRED`, `USER_NOT_FOUND`, `USER_DISABLED`).

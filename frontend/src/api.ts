@@ -372,9 +372,15 @@ const buildFriendlyMessage = (details: ApiErrorDetails) => {
       ? `Lizenz inaktiv. ${baseMessage}`
       : 'Lizenz inaktiv. Bitte Lizenz prüfen.'
   }
+  const sessionMessages: Record<string, string> = {
+    SESSION_COOKIE_MISSING: 'Das Session-Cookie wurde nicht übertragen.',
+    SESSION_NOT_FOUND: 'Die Sitzung wurde nicht gefunden.',
+    SESSION_EXPIRED: 'Die Sitzung ist abgelaufen.',
+  }
+  if (details.errorCode && sessionMessages[details.errorCode]) return sessionMessages[details.errorCode]
   switch (details.status) {
     case 401:
-      return baseMessage ? `Keine Berechtigung. ${baseMessage}` : 'Keine Berechtigung. Bitte neu anmelden.'
+      return baseMessage ? `Nicht angemeldet. ${baseMessage}` : 'Nicht angemeldet oder Sitzung ungültig. Bitte neu anmelden.'
     case 403:
       return baseMessage ? `Keine Berechtigung. ${baseMessage}` : 'Keine Berechtigung für diese Aktion.'
     case 404:

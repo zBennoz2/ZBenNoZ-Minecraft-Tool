@@ -40,8 +40,8 @@ export function LicenseGate({ children }: Props) {
     setSuccess(null)
     try {
       const result = await login(identifier.trim(), password, remember)
-      if (!result.ok) {
-        setError(result.message || 'Login fehlgeschlagen.')
+      if (!result.ok || !result.sessionActive) {
+        setError(result.message || 'Die Anmeldung war erfolgreich, aber die Sitzung konnte nicht gespeichert werden. Bitte Cookie-, HTTPS- und Proxy-Konfiguration prüfen.')
       } else {
         setSuccess('Login erfolgreich.')
         setPassword('')

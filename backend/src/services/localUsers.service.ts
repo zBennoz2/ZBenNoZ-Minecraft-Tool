@@ -13,6 +13,7 @@ type UsersFile = { users: LocalUser[] }
 type PermissionsFile = { permissions: InstancePermission[] }
 type Session = { tokenHash: string; userId: string; role?: UserRole; expiresAt: string; createdAt: string }
 type SessionsFile = { sessions: Session[] }
+export type SessionLookup = { status: 'SESSION_COOKIE_MISSING' | 'SESSION_NOT_FOUND' | 'SESSION_EXPIRED' | 'USER_NOT_FOUND' | 'USER_DISABLED' | 'OK'; user?: LocalUser }
 const usersPath = () => path.join(getDataDir(), 'users.json')
 const permissionsPath = () => path.join(getDataDir(), 'instance_permissions.json')
 const sessionsPath = () => path.join(getDataDir(), 'sessions.json')
@@ -39,7 +40,19 @@ export const localUsersService = {
   async updateUser(id: string, input: { username?: string; password?: string; role?: UserRole; disabled?: boolean }) { return enqueue(async () => { const data = await readJson<UsersFile>(usersPath(), { users: [] }); const user = data.users.find((u) => u.id === id); if (!user) return null; if (input.username) user.username = input.username.trim(); if (input.role) user.role = input.role; if (typeof input.disabled === 'boolean') user.disabled = input.disabled; if (input.password) user.passwordHash = await hashPassword(input.password); user.updatedAt = now(); await writeJsonAtomic(usersPath(), data); return safeUser(user) }) },
   async deleteUser(id: string) { return enqueue(async () => { const data = await readJson<UsersFile>(usersPath(), { users: [] }); const next = data.users.filter((u) => u.id !== id); await writeJsonAtomic(usersPath(), { users: next }); const perms = await readJson<PermissionsFile>(permissionsPath(), { permissions: [] }); await writeJsonAtomic(permissionsPath(), { permissions: perms.permissions.filter((p) => p.userId !== id) }); return next.length !== data.users.length }) },
   async createSession(userId: string, remember?: boolean) { const token = randomBytes(32).toString('hex'); const ttl = remember ? 30*24*60*60*1000 : 12*60*60*1000; const expiresAt = new Date(Date.now()+ttl).toISOString(); await enqueue(async () => { const usersData = await readJson<UsersFile>(usersPath(), { users: [] }); const role = usersData.users.find((u) => u.id === userId)?.role; const data = await readJson<SessionsFile>(sessionsPath(), { sessions: [] }); data.sessions.push({ tokenHash: hashToken(token), userId, role, expiresAt, createdAt: now() }); await writeJsonAtomic(sessionsPath(), { sessions: data.sessions.filter((s) => Date.parse(s.expiresAt) > Date.now()) }) }); return { token, expiresAt } },
-  async getUserBySession(token?: string) { if (!token) return null; const data = await readJson<SessionsFile>(sessionsPath(), { sessions: [] }); const session = data.sessions.find((s) => s.tokenHash === hashToken(token) && Date.parse(s.expiresAt) > Date.now()); return session ? this.getUser(session.userId) : null },
+  async inspectSession(token?: string): Promise<SessionLookup> {
+    if (!token) return { status: 'SESSION_COOKIE_MISSING' }
+    const sessions = await readJson<SessionsFile>(sessionsPath(), { sessions: [] })
+    const session = sessions.sessions.find((entry) => entry.tokenHash === hashToken(token))
+    if (!session) return { status: 'SESSION_NOT_FOUND' }
+    if (Date.parse(session.expiresAt) <= Date.now()) return { status: 'SESSION_EXPIRED' }
+    const users = await readJson<UsersFile>(usersPath(), { users: [] })
+    const user = users.users.find((entry) => entry.id === session.userId)
+    if (!user) return { status: 'USER_NOT_FOUND' }
+    if (user.disabled) return { status: 'USER_DISABLED' }
+    return { status: 'OK', user }
+  },
+  async getUserBySession(token?: string) { const result = await this.inspectSession(token); return result.status === 'OK' ? result.user ?? null : null },
   async destroySession(token?: string) { if (!token) return; await enqueue(async () => { const data = await readJson<SessionsFile>(sessionsPath(), { sessions: [] }); await writeJsonAtomic(sessionsPath(), { sessions: data.sessions.filter((s) => s.tokenHash !== hashToken(token)) }) }) },
   async listPermissions() { return (await readJson<PermissionsFile>(permissionsPath(), { permissions: [] })).permissions },
   async setPermissions(userId: string, instanceIds: string[]) { return enqueue(async () => { const data = await readJson<PermissionsFile>(permissionsPath(), { permissions: [] }); const permissions: InstancePermissionName[] = ['manage','console','files','backups','settings']; const next = [...data.permissions.filter((p) => p.userId !== userId), ...Array.from(new Set(instanceIds)).map((instanceId) => ({ userId, instanceId, permissions }))]; await writeJsonAtomic(permissionsPath(), { permissions: next }); return next.filter((p) => p.userId === userId) }) },

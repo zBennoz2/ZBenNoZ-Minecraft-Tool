@@ -221,19 +221,19 @@ export function useLicenseStatus() {
 
   const login = useCallback(async (identifier: string, password: string, remember: boolean) => {
     const result = await loginRequest(identifier, password, remember)
-    if (!result.ok) {
-      const message = result.message || 'Login fehlgeschlagen.'
+    if (!result.ok || !result.sessionActive) {
+      const message = result.message || 'Die Anmeldung war erfolgreich, aber die Sitzung konnte nicht gespeichert werden. Bitte Cookie-, HTTPS- und Proxy-Konfiguration prüfen.'
       setAuthState((prev) => ({ ...prev, state: 'error', message, authenticated: false }))
-      return result
+      return { ...result, ok: false, message, sessionActive: false }
     }
     const session = await loadSession()
-    if (session?.authenticated) {
+    if (session?.authenticated && session.role === 'admin' && session.isAdmin === true) {
       await refreshLicense(true)
-    } else {
-      // eslint-disable-next-line no-console
-      console.info('[auth] Login completed without stored token, skipping license check')
+      return result
     }
-    return result
+    const message = 'Die Anmeldung war erfolgreich, aber die Sitzung konnte nicht gespeichert werden. Bitte Cookie-, HTTPS- und Proxy-Konfiguration prüfen.'
+    setAuthState((prev) => ({ ...prev, state: 'error', message, authenticated: false }))
+    return { ...result, ok: false, message, error_code: 'SESSION_VALIDATION_FAILED', sessionActive: false }
   }, [loadSession, refreshLicense])
 
   const logout = useCallback(async () => {

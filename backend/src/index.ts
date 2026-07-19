@@ -62,7 +62,9 @@ const defaultAllowedOrigins = [
   'http://127.0.0.1:3001',
 ];
 
-const envAllowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+const envAllowedOrigins = [process.env.FRONTEND_ORIGIN, process.env.ALLOWED_ORIGINS]
+  .filter(Boolean)
+  .join(',')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);

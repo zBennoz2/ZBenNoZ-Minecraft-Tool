@@ -38,6 +38,8 @@ export type LoginResult = {
   error_code?: string
   device_limit?: number
   devices_used?: number
+  session?: AuthSession
+  sessionActive?: boolean
 }
 
 type LoginErrorResponse = {
@@ -76,12 +78,34 @@ export async function getSession(): Promise<AuthSession> {
 }
 
 export async function login(identifier: string, password: string, remember: boolean): Promise<LoginResult> {
-  const result = await fetchApi<LoginResponse>('/api/auth/login', {
+  const response = await fetchApi<LoginResponse>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ identifier, password, remember }),
   })
+  const result = mapLoginResponseToResult(response)
+  if (!result.ok) return result
 
-  return mapLoginResponseToResult(result)
+  try {
+    const session = await getSession()
+    const sessionActive = session.authenticated === true && session.role === 'admin' && session.isAdmin === true
+    if (!sessionActive) {
+      return {
+        ok: false,
+        error_code: 'SESSION_VALIDATION_FAILED',
+        message: 'Die Anmeldung war erfolgreich, aber die Sitzung konnte nicht gespeichert werden. Bitte Cookie-, HTTPS- und Proxy-Konfiguration prüfen.',
+        session,
+        sessionActive: false,
+      }
+    }
+    return { ...result, session, sessionActive: true }
+  } catch {
+    return {
+      ok: false,
+      error_code: 'SESSION_VALIDATION_FAILED',
+      message: 'Die Anmeldung war erfolgreich, aber die Sitzung konnte nicht gespeichert werden. Bitte Cookie-, HTTPS- und Proxy-Konfiguration prüfen.',
+      sessionActive: false,
+    }
+  }
 }
 
 export async function logout(): Promise<void> {
