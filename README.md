@@ -116,26 +116,28 @@ cd ZBenNoZ-Minecraft-Tool
 
 ```bash
 npm install
-npm --prefix backend install
-npm --prefix frontend install
+npm run build
+npm start
 ```
+
+`npm install` installs both backend and frontend dependencies automatically. `npm run build` builds the React frontend first and then the backend. `npm start` serves both at the same origin on port `3001` by default; no `.env` file is required.
 
 ---
 
 ## Lizenzhinweis (WICHTIG)
 
-🔑 **Beim ersten Start muss eine gültige Lizenz angegeben werden.**
+🔑 **Beim ersten Öffnen meldest du dich im Panel mit deinem zbennoz.com-Account an.**
 
-- Die Lizenz wird **direkt beim Start des Agents abgefragt**
-- Ohne gültige Lizenz startet die Anwendung nicht
-- Stelle sicher, dass du deine Lizenzdatei bzw. deinen Lizenzschlüssel bereit hast
+- Die Lizenz und das Gerät werden beim zentralen Login geprüft.
+- Bei erfolgreichem ersten Login wird der lokale `license_admin` automatisch erstellt.
+- Es ist weder eine `.env`-Datei noch ein vorab angelegter lokaler Benutzer erforderlich.
 
 ---
 
 ## Start der Anwendung (Agent – Web)
 
 ```bash
-npm run agent:web
+npm start
 ```
 
 Der Agent startet standardmäßig auf **Port 3001**.
@@ -243,7 +245,7 @@ After=network.target
 Type=simple
 User=lager
 WorkingDirectory=/home/user/ZBenNoZ-Minecraft-Tool
-ExecStart=/usr/bin/npm run agent:web
+ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -298,7 +300,7 @@ sudo ufw allow 3001/tcp
 
 ### ❌ Port bereits belegt
 ```bash
-PORT=4000 npm run agent:web
+PORT=4000 npm start
 ```
 
 ---

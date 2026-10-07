@@ -1,3 +1,4 @@
+import { PaperService, PAPER_USER_AGENT } from './PaperService';
 import { createHash } from 'crypto';
 import { createReadStream, createWriteStream } from 'fs';
 import { promises as fs } from 'fs';
@@ -7,11 +8,6 @@ import { Readable } from 'stream';
 import { ReadableStream } from 'stream/web';
 
 const VANILLA_MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
-const PAPER_USER_AGENT = 'MinecraftPanel/0.1 (+https://example.invalid; contact: admin@example.invalid)';
-const PAPER_BUILDS_URL = (mcVersion: string) =>
-  `https://api.papermc.io/v2/projects/paper/versions/${encodeURIComponent(mcVersion)}/builds`;
-const PAPER_DOWNLOAD_URL = (mcVersion: string, build: number, fileName: string) =>
-  `https://api.papermc.io/v2/projects/paper/versions/${encodeURIComponent(mcVersion)}/builds/${build}/downloads/${encodeURIComponent(fileName)}`;
 const DEFAULT_USER_AGENT = 'MinecraftPanel/0.1 (+https://example.local)';
 const DEFAULT_RETRIES = 3;
 
@@ -31,22 +27,6 @@ interface VanillaVersionDetails {
     server?: { url: string; sha1: string };
   };
 }
-
-type PaperBuildDownloadInfo = {
-  name?: string;
-  sha256?: string;
-};
-
-type PaperBuildInfo = {
-  build: number;
-  channel?: string;
-  downloads?: Record<string, PaperBuildDownloadInfo>;
-};
-
-type PaperBuildsResponse = {
-  version?: string;
-  builds?: PaperBuildInfo[];
-};
 
 export class DownloadService {
   private async ensureDir(dirPath: string) {
@@ -142,39 +122,18 @@ export class DownloadService {
   }
 
   async downloadPaperServerJar(mcVersion: string, destPath: string): Promise<void> {
-    const builds = await this.fetchJson<PaperBuildsResponse>(PAPER_BUILDS_URL(mcVersion), {
-      'User-Agent': PAPER_USER_AGENT,
-    });
-
-    if (!builds?.builds || !Array.isArray(builds.builds) || builds.builds.length === 0) {
-      throw new Error(`No Paper builds available for version ${mcVersion}`);
+    const { builds } = await new PaperService().getBuilds(mcVersion);
+    const preferredBuild = builds.find((build) => build.channel === 'STABLE');
+    if (!preferredBuild) {
+      throw new Error(`Für Minecraft ${mcVersion} ist noch kein stabiler Paper-Build verfügbar. Bitte eine andere Version wählen.`);
     }
-
-    const sortedBuilds = builds.builds.slice().sort((a, b) => b.build - a.build);
-    const preferredBuild =
-      sortedBuilds.find((build) => build.channel?.toUpperCase?.() === 'STABLE') ?? sortedBuilds[0];
-
-    const downloadInfo =
-      preferredBuild.downloads?.application ??
-      Object.values(preferredBuild.downloads ?? {}).find((info) => info?.name);
-
-    if (!downloadInfo?.name) {
-      throw new Error(`Server download name missing for Paper ${mcVersion} build ${preferredBuild.build}`);
-    }
-
-    const downloadUrl = PAPER_DOWNLOAD_URL(builds.version ?? mcVersion, preferredBuild.build, downloadInfo.name);
-
-    await this.downloadToFile(downloadUrl, destPath, { 'User-Agent': PAPER_USER_AGENT });
-
-
-    if (downloadInfo.sha256) {
-      const hash = await this.computeFileHash(destPath, 'sha256');
-      if (hash !== downloadInfo.sha256) {
-        await fs.rm(destPath, { force: true });
-        throw new Error(
-          `SHA256 mismatch for downloaded Paper jar (expected ${downloadInfo.sha256}, got ${hash})`,
-        );
-      }
+    const download = preferredBuild.download;
+    if (!download) throw new Error(`Verifizierter Server-Download für Paper ${mcVersion} fehlt.`);
+    await this.downloadToFile(download.url, destPath, { 'User-Agent': PAPER_USER_AGENT });
+    const hash = await this.sha256File(destPath);
+    if (hash !== download.sha256) {
+      await fs.rm(destPath, { force: true });
+      throw new Error(`SHA256 mismatch for downloaded Paper jar (expected ${download.sha256}, got ${hash})`);
     }
   }
 }

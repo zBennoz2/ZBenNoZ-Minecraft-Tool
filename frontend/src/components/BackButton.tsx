@@ -6,7 +6,7 @@ interface BackButtonProps {
   label?: string
 }
 
-export function BackButton({ fallback = '/', label = 'Back' }: BackButtonProps) {
+export function BackButton({ fallback = '/', label = 'Zurück' }: BackButtonProps) {
   const navigate = useNavigate()
   const location = useLocation()
 

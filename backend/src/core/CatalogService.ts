@@ -1,3 +1,4 @@
+import { PaperService, PaperBuild } from './PaperService';
 import { sortVersionsDesc } from '../utils/versionSort';
 
 interface VanillaManifestEntry {
@@ -16,26 +17,11 @@ interface PaperProjectResponse {
   versions: string[];
 }
 
-interface PaperBuildInfo {
-  build: number;
-  channel: string;
-  time?: string;
-  // optional downloads field may be present when build details are fetched
-  downloads?: Record<string, unknown>;
-}
-
-interface PaperBuildsResponse {
-  version: string;
-  builds: PaperBuildInfo[];
-}
+interface PaperBuildsResponse { version: string; builds: PaperBuild[]; }
 
 type CacheEntry<T> = { data: T; expiresAt: number };
 
 const VANILLA_MANIFEST_URL = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
-// Correct PaperMC API endpoints (was a typo: 'fill' -> 'api')
-const PAPER_PROJECT_URL = 'https://api.papermc.io/v2/projects/paper';
-const PAPER_BUILDS_URL = (mcVersion: string) =>
-  `https://api.papermc.io/v2/projects/paper/versions/${encodeURIComponent(mcVersion)}/builds`;
 const FABRIC_GAME_VERSIONS_URL = 'https://meta.fabricmc.net/v2/versions/game';
 const FABRIC_LOADER_VERSIONS_URL = (mcVersion: string) =>
   `https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`;
@@ -46,7 +32,6 @@ const NEOFORGE_METADATA_URL =
   'https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml';
 
 const CACHE_TTL_MS = 10 * 60_000;
-const PAPER_USER_AGENT = 'MinecraftPanel/0.1 (+https://example.invalid; contact: admin@example.invalid)';
 const FORGE_USER_AGENT = 'MinecraftPanel/0.1 (+https://example.local)';
 
 interface FabricGameVersion {
@@ -78,6 +63,7 @@ export class CatalogService {
     return `1.${match[1]}`;
   }
 
+  private paperService = new PaperService();
   private vanillaCache: CacheEntry<VanillaManifest> | null = null;
   private paperVersionsCache: CacheEntry<PaperProjectResponse> | null = null;
   private paperBuildsCache = new Map<string, CacheEntry<PaperBuildsResponse>>();
@@ -148,13 +134,7 @@ export class CatalogService {
     if (this.isFresh(this.paperVersionsCache)) {
       data = this.paperVersionsCache.data;
     } else {
-      data = await this.fetchJson<PaperProjectResponse>(PAPER_PROJECT_URL, {
-        'User-Agent': PAPER_USER_AGENT,
-      });
-      // Defensive: ensure the API returned an array of versions
-      if (!data || !Array.isArray((data as any).versions)) {
-        throw new Error('Invalid PaperMC response: expected versions array')
-      }
+      data = await this.paperService.getVersions();
       this.paperVersionsCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
     }
 
@@ -168,9 +148,7 @@ export class CatalogService {
       return existing.data;
     }
 
-    const data = await this.fetchJson<PaperBuildsResponse>(PAPER_BUILDS_URL(mcVersion), {
-      'User-Agent': PAPER_USER_AGENT,
-    });
+    const data = await this.paperService.getBuilds(mcVersion);
 
     this.paperBuildsCache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
     return data;

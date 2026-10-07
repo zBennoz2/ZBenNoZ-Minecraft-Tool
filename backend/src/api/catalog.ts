@@ -25,7 +25,7 @@ router.get('/paper/versions', async (_req: Request, res: Response) => {
     res.json(result);
   } catch (error: any) {
     console.error('Failed to fetch paper catalog', error);
-    res.status(502).json({ error: 'Failed to fetch Paper versions', detail: error?.message });
+    res.status(502).json({ error: 'PAPER_CATALOG_UNAVAILABLE', message: 'Paper-Versionen konnten nicht geladen werden. Bitte erneut versuchen. Falls der Fehler bleibt, prüfe die Verbindung des Servers zu fill.papermc.io.', detail: error?.message });
   }
 });
 
@@ -41,7 +41,7 @@ router.get('/paper/builds/:mcVersion', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error(`Failed to fetch paper builds for ${mcVersion}`, error);
-    res.status(502).json({ error: 'Failed to fetch Paper builds', detail: error?.message });
+    res.status(502).json({ error: 'PAPER_BUILDS_UNAVAILABLE', message: 'Paper-Builds konnten nicht geladen werden. Bitte erneut versuchen oder eine andere Minecraft-Version wählen.', detail: error?.message });
   }
 });
 

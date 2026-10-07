@@ -63,7 +63,7 @@ const normalizeMemoryInput = (input: string): { value?: string; error?: string }
   if (!raw) return { error: 'RAM darf nicht leer sein' }
 
   const match = raw.match(/^(\d+)([MG]?)$/)
-  if (!match) return { error: 'Ungültiges RAM-Format (z. B. 2G oder 4096M)' }
+  if (!match) return { error: 'Bitte gib den RAM als 2G oder 4096M an.' }
 
   const amount = Number(match[1])
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -138,7 +138,7 @@ const formatIdle = (value: number | null | undefined) => {
 const formatBytes = (size: number) => {
   if (!Number.isFinite(size)) return '—'
   if (size < 1024) return `${size} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let value = size
   let index = 0
   while (value >= 1024 && index < units.length - 1) {
@@ -154,6 +154,7 @@ export function SettingsPage() {
   const canEditResources = authState.role === 'admin' || authState.isAdmin === true
   const navigate = useNavigate()
   const { isInstanceWindow, instanceSearch } = useWindowContext()
+  const [settingsTab, setSettingsTab] = useState('general')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [restartState, setRestartState] = useState<'idle' | 'stopping' | 'starting' | 'error'>(
@@ -174,6 +175,7 @@ export function SettingsPage() {
   const [sleepStatus, setSleepStatus] = useState<SleepStatus | null>(null)
   const [sleepLoading, setSleepLoading] = useState(false)
   const [sleepSaving, setSleepSaving] = useState(false)
+  const [sleepSuccess, setSleepSuccess] = useState<string | null>(null)
   const [sleepError, setSleepError] = useState<string | null>(null)
   const [backups, setBackups] = useState<BackupInfo[]>([])
   const [backupFormat, setBackupFormat] = useState<BackupFormat>('zip')
@@ -201,6 +203,12 @@ export function SettingsPage() {
     return JSON.stringify({ ...form, memoryMax: form.memoryMax.trim() }) !==
       JSON.stringify({ ...initialForm, memoryMax: initialForm.memoryMax.trim() })
   }, [form, initialForm])
+
+  useEffect(() => {
+    const warnOnLeave = (event: BeforeUnloadEvent) => { if (isDirty) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('beforeunload', warnOnLeave)
+    return () => window.removeEventListener('beforeunload', warnOnLeave)
+  }, [isDirty])
 
   const hasValidationError = Object.values(validation).some(Boolean)
 
@@ -239,11 +247,19 @@ export function SettingsPage() {
 
   const saveSleep = async () => {
     if (!id || !sleepSettings) return
+    const idleMinutes = sleepSettings.idleMinutes ?? 15
+    const wakeGraceSeconds = sleepSettings.wakeGraceSeconds ?? 60
+    if (!Number.isInteger(idleMinutes) || idleMinutes < 1 || !Number.isInteger(wakeGraceSeconds) || wakeGraceSeconds < 10) {
+      setSleepError('Bitte gib ganze Zahlen ein: mindestens 1 Minute Leerlauf und 10 Sekunden Wartezeit.')
+      return
+    }
     setSleepSaving(true)
     setSleepError(null)
+    setSleepSuccess(null)
     try {
       const updated = await updateSleepSettings(id, sleepSettings)
       setSleepSettings(updated)
+      setSleepSuccess('Energiespar-Einstellungen gespeichert.')
       await refreshSleepStatus()
     } catch (err) {
       setSleepError(resolveApiErrorMessage(err))
@@ -365,7 +381,7 @@ export function SettingsPage() {
   }
 
   const handleDeleteBackup = async (backupId: string) => {
-    if (!id) return
+    if (!id || !window.confirm('Dieses Backup dauerhaft löschen? Die Sicherung kann danach nicht wiederhergestellt werden.')) return
     try {
       await deleteBackup(id, backupId)
       loadBackups()
@@ -391,6 +407,7 @@ export function SettingsPage() {
   }
 
   const updateSleepField = (field: keyof SleepSettings, value: boolean | number) => {
+    setSleepSuccess(null)
     setSleepSettings((prev) => (prev ? { ...prev, [field]: value } : prev))
   }
 
@@ -460,7 +477,8 @@ export function SettingsPage() {
     const payload: InstanceUpdatePayload = {}
 
     if (form.name !== initialForm.name) {
-      payload.name = form.name
+      if (!form.name.trim()) { setSaveError('Bitte gib deinem Server einen Namen.'); setSaving(false); return }
+      payload.name = form.name.trim()
     }
 
     if (canEditResources && form.memoryMax.trim() !== initialForm.memoryMax.trim()) {
@@ -528,7 +546,7 @@ export function SettingsPage() {
       setForm(nextForm)
       setInitialForm(nextForm)
       setInstanceSnapshot(updated)
-      setSuccess('Settings saved')
+      setSuccess('Einstellungen gespeichert.')
       const currentStatus = await refreshStatus()
       const restartNeeded = currentStatus === 'running' && isRestartRelevantChange(nextForm, initialForm)
       setRestartRequired(restartNeeded)
@@ -566,13 +584,13 @@ export function SettingsPage() {
         )
         const candidates = formatJavaCandidateList(startResult.candidates).join(' ')
         throw new Error(
-          `Instance requires ${requirementText}. ${candidates} Install the required Java or update the Java Path.`,
+          `Instance requires ${requirementText}. ${candidates} Install the required Java or update the Java-Pfad.`,
         )
       }
       await refreshStatus()
       setRestartState('idle')
       setRestartRequired(false)
-      setSuccess('Instance restarted to apply changes')
+      setSuccess('Server mit den neuen Einstellungen gestartet.')
     } catch (err) {
       setRestartState('error')
       setSaveError(resolveApiErrorMessage(err))
@@ -622,7 +640,7 @@ export function SettingsPage() {
 
   if (loading) {
     return (
-      <section className="page">
+      <section className="page settings-page">
         <div className="page__toolbar">
           <BackButton
             fallback={
@@ -632,7 +650,7 @@ export function SettingsPage() {
         </div>
         <div className="page__header page__header--spread">
           <div>
-            <h1>Settings</h1>
+            <h1>Server verwalten</h1>
             <p className="page__hint">Loading instance settings…</p>
           </div>
         </div>
@@ -643,7 +661,7 @@ export function SettingsPage() {
 
   if (error) {
     return (
-      <section className="page">
+      <section className="page settings-page">
         <div className="page__toolbar">
           <BackButton
             fallback={
@@ -653,8 +671,8 @@ export function SettingsPage() {
         </div>
         <div className="page__header page__header--spread">
           <div>
-            <h1>Settings</h1>
-            <p className="page__hint">Instance: {id}</p>
+            <h1>Server verwalten</h1>
+            <p className="page__hint">{instanceSnapshot?.name ?? 'Server'} · Ressourcen, Startverhalten und Sicherungen verwalten.</p>
           </div>
           <button className="btn" onClick={fetchSettings}>
             Retry
@@ -672,7 +690,7 @@ export function SettingsPage() {
   const restartBanner = restartRequired && status === 'running'
 
   return (
-    <section className="page">
+    <section className="page settings-page">
       <div className="page__toolbar">
         <BackButton
           fallback={
@@ -682,19 +700,20 @@ export function SettingsPage() {
       </div>
       <div className="page__header page__header--spread">
         <div>
-          <h1>Settings</h1>
-          <p className="page__hint">Instance: {id}</p>
+          <h1>Server verwalten</h1>
+          <p className="page__hint">{instanceSnapshot?.name ?? 'Server'} · Ressourcen, Startverhalten und Sicherungen verwalten.</p>
           <p className="page__hint">Status: {status}</p>
         </div>
-        <div className="actions">
-          <button className="btn btn--ghost" onClick={fetchSettings} disabled={saving}>
-            Reload
+        <div className="actions save-toolbar">
+          <span className="save-state" role="status">{isDirty ? 'Ungespeicherte Änderungen' : 'Konfiguration gespeichert'}</span>
+          <button className="btn btn--ghost" onClick={() => { if (!isDirty || window.confirm('Ungespeicherte Änderungen verwerfen und neu laden?')) void fetchSettings() }} disabled={saving}>
+            Neu laden
           </button>
           <button className="btn btn--secondary" onClick={handleReset} disabled={!isDirty || saving}>
-            Reset
+            Verwerfen
           </button>
           <button className="btn" onClick={handleSave} disabled={!isDirty || saving || hasValidationError}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Speichert…' : 'Änderungen speichern'}
           </button>
         </div>
       </div>
@@ -703,7 +722,7 @@ export function SettingsPage() {
       {success ? <div className="alert alert--muted">{success}</div> : null}
       {restartBanner ? (
         <div className="alert alert--muted">
-          Restart required to apply changes.
+          Die Änderungen sind gespeichert. Starte den Server neu, damit sie wirksam werden.
           <div className="actions actions--inline" style={{ marginTop: 8 }}>
             <button
               className="btn"
@@ -711,20 +730,26 @@ export function SettingsPage() {
               disabled={restartState === 'stopping' || restartState === 'starting'}
             >
               {restartState === 'stopping'
-                ? 'Stopping…'
+                ? 'Stoppt…'
                 : restartState === 'starting'
-                  ? 'Starting…'
-                  : 'Restart now'}
+                  ? 'Startet…'
+                  : 'Jetzt neu starten'}
             </button>
             <button className="btn btn--secondary" onClick={() => setRestartRequired(false)}>
-              Later
+              Später
             </button>
           </div>
         </div>
       ) : null}
 
-      <div className="form-grid">
-        <FormSection title="Server Basics">
+      <nav className="settings-tabs" aria-label="Einstellungskategorien">
+        {[['general', 'Allgemein'], ['runtime', 'Start & Java'], ['sleep', 'Energiesparen'], ['backups', 'Backups'], ['advanced', 'Verwaltung']].map(([key, label]) => (
+          <button key={key} type="button" className={`settings-tab${settingsTab === key ? ' is-active' : ''}`} aria-pressed={settingsTab === key} onClick={() => setSettingsTab(key)}>{label}</button>
+        ))}
+      </nav>
+      <div className="form-grid settings-content">
+        <div hidden={settingsTab !== 'general'} className="settings-group">
+        <FormSection title="Allgemein">
           <FormRow label="Name">
             <input
               type="text"
@@ -732,19 +757,20 @@ export function SettingsPage() {
               onChange={(event) => setForm((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
             />
           </FormRow>
-          <FormRow label="Server Type">
+          <FormRow label="Server-Software">
             <input type="text" value={form.serverType} readOnly />
           </FormRow>
           {form.serverType !== 'hytale' ? (
-            <FormRow label="Minecraft Version">
+            <FormRow label="Minecraft-Version">
               <input type="text" value={form.minecraftVersion ?? '—'} readOnly />
             </FormRow>
           ) : null}
         </FormSection>
 
-        <FormSection title="Resources">
+        <FormSection title="Arbeitsspeicher">
           {!canEditResources ? <div className="notice">Nur Admins dürfen RAM/Ressourcen ändern.</div> : null}
-          <FormRow label="RAM Max" help="z. B. 2G oder 4096M">
+          <div className="memory-presets" aria-label="Arbeitsspeicher-Vorlagen">{['2G', '4G', '8G'].map((value) => <button type="button" key={value} className={`btn btn--secondary${form.memoryMax === value ? ' btn--active' : ''}`} disabled={!canEditResources} onClick={() => handleMemoryChange(value)}>{value.replace('G', ' GB')}</button>)}</div>
+          <FormRow label="Maximaler Arbeitsspeicher" help="Zum Beispiel 2G = 2 GB. Lass genug Speicher für das System und weitere Server frei.">
             <input
               type="text"
               value={form.memoryMax}
@@ -763,8 +789,10 @@ export function SettingsPage() {
           </FormRow>
         </FormSection>
 
+        </div>
+        <div hidden={settingsTab !== 'runtime'} className="settings-group">
         <FormSection title="Java">
-          <FormRow label="Java Path" help="Optional: leer lassen für automatische Erkennung">
+          <FormRow label="Java-Pfad" help="Optional: leer lassen für automatische Erkennung">
             <input
               type="text"
               placeholder="/usr/bin/java"
@@ -774,9 +802,6 @@ export function SettingsPage() {
                 setForm((prev) => (prev ? { ...prev, javaPath: event.target.value } : prev))
               }
             />
-          </FormRow>
-          <FormRow label="JVM Args" help="Not supported (coming soon)">
-            <input type="text" value="Not supported (coming soon)" readOnly />
           </FormRow>
         </FormSection>
 
@@ -877,15 +902,15 @@ export function SettingsPage() {
           </FormSection>
         ) : null}
 
-        <FormSection title="Startup">
+        <FormSection title="Startverhalten">
           <FormRow label="nogui">
             <FormToggle label="Server ohne GUI starten" checked={form.nogui} onChange={() => handleToggle('nogui')} />
           </FormRow>
           <FormRow
-            label="Startup args"
+            label="Zusätzliche Startargumente"
             help={
               form.startupMode !== 'script'
-                ? 'Startup args nur für Script-Mode verfügbar'
+                ? 'Zusätzliche Startargumente nur für Script-Mode verfügbar'
                 : 'Argumente durch Leerzeichen trennen'
             }
           >
@@ -916,8 +941,10 @@ export function SettingsPage() {
           </FormSection>
         ) : null}
 
+        </div>
+        <div hidden={settingsTab !== 'sleep'} className="settings-group">
         <FormSection
-          title="Sleep Mode"
+          title="Energiesparen"
           description={
             form.serverType === 'hytale'
               ? 'Stoppt inaktive Server. Wake-on-ping ist aktuell nur für Minecraft-Statuspings verfügbar.'
@@ -926,57 +953,59 @@ export function SettingsPage() {
           actions={
             <div className="actions actions--inline">
               <button className="btn" onClick={saveSleep} disabled={sleepLoading || sleepSaving}>
-                {sleepSaving ? 'Saving…' : 'Save sleep settings'}
+                {sleepSaving ? 'Speichert…' : 'Energiesparen speichern'}
               </button>
-              <button className="btn btn--secondary" onClick={refreshSleepStatus} disabled={sleepLoading}>
-                Refresh status
+              <button className="btn btn--secondary" onClick={refreshSleepStatus} disabled={sleepLoading || sleepSaving}>
+                Status aktualisieren
               </button>
-              <button className="btn btn--ghost" onClick={loadSleep} disabled={sleepLoading}>
-                Reload
+              <button className="btn btn--ghost" onClick={loadSleep} disabled={sleepLoading || sleepSaving}>
+                Neu laden
               </button>
             </div>
           }
         >
-          {sleepError ? <div className="alert alert--error">{sleepError}</div> : null}
+          <p className="page__hint">Änderungen in diesem Bereich mit „Energiesparen speichern“ übernehmen.</p>
+          {sleepSuccess ? <div className="alert alert--muted" role="status">{sleepSuccess}</div> : null}
+          {sleepError ? <div className="alert alert--error" role="alert">{sleepError}</div> : null}
           <FormRow label="Sleep Mode">
             <FormToggle
               label="Sleep aktivieren"
               description="Server schlafen lassen, wenn keine Spieler online sind."
               checked={sleepSettings?.sleepEnabled ?? false}
               onChange={(value) => updateSleepField('sleepEnabled', value)}
-              disabled={sleepLoading}
+              disabled={sleepLoading || sleepSaving}
             />
           </FormRow>
-          <FormRow label="Idle minutes" help="Minuten ohne Spieler, bevor der Server stoppt.">
+          <FormRow label="Leerlauf (Minuten)" help="Minuten ohne Spieler, bevor der Server stoppt.">
             <input
               type="number"
               min={1}
               value={sleepSettings?.idleMinutes ?? 15}
               onChange={(event) => updateSleepField('idleMinutes', Number(event.target.value) || 0)}
-              disabled={sleepLoading}
+              disabled={sleepLoading || sleepSaving}
             />
           </FormRow>
-          <FormRow label="Wake grace" help="Sekunden bis zum Stop nach einem Wake-Signal." >
+          <FormRow label="Wartezeit nach dem Aufwecken (Sekunden)" help="So lange bleibt der Server nach dem Aufwecken mindestens aktiv." >
             <input
               type="number"
               min={10}
               value={sleepSettings?.wakeGraceSeconds ?? 60}
               onChange={(event) => updateSleepField('wakeGraceSeconds', Number(event.target.value) || 0)}
-              disabled={sleepLoading}
+              disabled={sleepLoading || sleepSaving}
             />
           </FormRow>
-          <FormRow label="Wake on ping">
+          <FormRow label="Automatisch aufwecken">
             <FormToggle
               label="Auf Status-Pings reagieren"
               checked={sleepSettings?.wakeOnPing ?? true}
               onChange={(value) => updateSleepField('wakeOnPing', value)}
-              disabled={sleepLoading}
+              disabled={sleepLoading || sleepSaving}
             />
           </FormRow>
           <div className="page__hint">
-            <div>Enabled: {sleepSettings?.sleepEnabled ? 'Yes' : 'No'}</div>
+            <div>Energiesparen: {sleepSettings?.sleepEnabled ? 'Aktiviert' : 'Deaktiviert'}</div>
             <div>
-              Idle for: {formatIdle(sleepStatus?.idleFor)} / Last activity: {formatTimestamp(sleepStatus?.lastActivityAt)}
+              Inaktiv seit: {formatIdle(sleepStatus?.idleFor)} / Letzte Aktivität: {formatTimestamp(sleepStatus?.lastActivityAt)}
             </div>
             <div>
               Status: {sleepStatus?.proxyStatus ?? 'unknown'} · Start: {sleepStatus?.startInProgress ? 'starting' : 'idle'} · Stop:{' '}
@@ -985,9 +1014,11 @@ export function SettingsPage() {
           </div>
         </FormSection>
 
+        </div>
+        <div hidden={settingsTab !== 'backups'} className="settings-group">
         <FormSection
-          title="Backups & Restore"
-          description={`Stored at APP_DATA_DIR/backups/${id}. Enthält Welten, Configs und Spielerlisten.`}
+          title="Sichern & Wiederherstellen"
+          description="Sichere Welten, Einstellungen und Spielerlisten. Vor einer Wiederherstellung empfiehlt sich eine zusätzliche Sicherung."
         >
           {backupError ? <div className="alert alert--error">{backupError}</div> : null}
           {downloadError ? <div className="alert alert--error">{downloadError}</div> : null}
@@ -1002,10 +1033,10 @@ export function SettingsPage() {
                 <option value="tar.gz">tar.gz</option>
               </select>
               <button className="btn" onClick={startBackup} disabled={backupsLoading}>
-                Create backup
+                Backup erstellen
               </button>
               <button className="btn btn--ghost" onClick={loadBackups} disabled={backupsLoading}>
-                Refresh list
+                Liste aktualisieren
               </button>
             </div>
           </FormRow>
@@ -1021,39 +1052,39 @@ export function SettingsPage() {
               {restoreJob.error ? ` - ${restoreJob.error}` : ''}
             </div>
           ) : null}
-          <FormRow label="Restore options" alignTop>
+          <FormRow label="Wiederherstellung" alignTop>
             <div className="form-grid">
               <FormToggle
-                label="Force stop before restore"
+                label="Server vor der Wiederherstellung stoppen"
                 checked={restoreOptions.forceStop}
                 onChange={(value) => setRestoreOptions((prev) => ({ ...prev, forceStop: value }))}
               />
               <FormToggle
-                label="Take snapshot before restore"
+                label="Vorher eine zusätzliche Sicherung erstellen"
                 checked={restoreOptions.preRestoreSnapshot}
                 onChange={(value) => setRestoreOptions((prev) => ({ ...prev, preRestoreSnapshot: value }))}
               />
               <FormToggle
-                label="Auto-start after restore"
+                label="Server anschließend automatisch starten"
                 checked={restoreOptions.autoStart}
                 onChange={(value) => setRestoreOptions((prev) => ({ ...prev, autoStart: value }))}
               />
             </div>
           </FormRow>
           {backupsLoading ? (
-            <div className="alert alert--muted">Loading backups…</div>
+            <div className="alert alert--muted">Backups werden geladen…</div>
           ) : backups.length === 0 ? (
-            <div className="alert alert--muted">No backups yet.</div>
+            <div className="alert alert--muted">Noch keine Backups. Erstelle eine Sicherung, bevor du größere Änderungen vornimmst.</div>
           ) : (
             <div className="table" style={{ overflowX: 'auto' }}>
               <table>
                 <thead>
                   <tr>
                     <th>Name</th>
-                    <th>Created</th>
-                    <th>Size</th>
+                    <th>Erstellt</th>
+                    <th>Größe</th>
                     <th>Format</th>
-                    <th>Actions</th>
+                    <th>Aktionen</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1072,7 +1103,7 @@ export function SettingsPage() {
                           onClick={() => handleRestore(backup.id)}
                           disabled={restoreInFlight === backup.id}
                         >
-                          {restoreInFlight === backup.id ? 'Restoring…' : 'Restore'}
+                          {restoreInFlight === backup.id ? 'Wird wiederhergestellt…' : 'Wiederherstellen'}
                         </button>
                         <button className="btn btn--ghost" onClick={() => handleDeleteBackup(backup.id)}>
                           Delete
@@ -1086,8 +1117,10 @@ export function SettingsPage() {
           )}
         </FormSection>
 
+        </div>
+        <div hidden={settingsTab !== 'advanced'} className="settings-group">
         <FormSection
-          title="Debug"
+          title="Anmeldung zurücksetzen"
           description="Session zurücksetzen, um Token, Cache und Device-Registrierung zu löschen."
           actions={
             <button className="btn btn--secondary" onClick={handleResetSession} disabled={resettingSession}>
@@ -1101,8 +1134,8 @@ export function SettingsPage() {
         </FormSection>
 
         <FormSection
-          title="Danger Zone"
-          description="Deleting an instance removes its configuration, server files, logs, and backups."
+          title="Server löschen"
+          description="Löscht diesen Server mit Einstellungen, Welten, Logs und Backups dauerhaft."
           actions={
             <button
               className="btn btn--danger"
@@ -1112,12 +1145,13 @@ export function SettingsPage() {
                 setDeleteOpen(true)
               }}
             >
-              Delete instance
+              Server löschen
             </button>
           }
         >
           {deleteError ? <div className="alert alert--error">{deleteError}</div> : null}
         </FormSection>
+        </div>
       </div>
 
       {deleteOpen ? (
@@ -1125,18 +1159,18 @@ export function SettingsPage() {
           <div className="modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="modal__header">
               <div>
-                <h2>Delete instance</h2>
+                <h2>Server löschen</h2>
                 <p className="page__hint">
                   Type <strong>{instanceSnapshot?.name}</strong> to confirm deletion.
                 </p>
               </div>
               <button className="btn btn--ghost" onClick={closeDeleteModal}>
-                Close
+                Schließen
               </button>
             </div>
             <div className="form">
               <label className="form__field">
-                <span>Confirmation</span>
+                <span>Bestätigung</span>
                 <input
                   type="text"
                   value={deleteConfirm}
@@ -1154,7 +1188,7 @@ export function SettingsPage() {
                   onClick={handleDeleteInstance}
                   disabled={deleting || deleteConfirm.trim() !== instanceSnapshot?.name}
                 >
-                  {deleting ? 'Deleting…' : 'Delete'}
+                  {deleting ? 'Wird gelöscht…' : 'Endgültig löschen'}
                 </button>
               </div>
             </div>

@@ -386,6 +386,12 @@ const buildFriendlyMessage = (details: ApiErrorDetails) => {
       return baseMessage ? `Keine Berechtigung. ${baseMessage}` : 'Keine Berechtigung für diese Aktion.'
     case 404:
       return baseMessage ? `Nicht gefunden. ${baseMessage}` : 'Ressource nicht gefunden.'
+    case 429:
+      return baseMessage ?? 'Zu viele Anfragen. Bitte warte einen Moment und versuche es erneut.'
+    case 502:
+    case 503:
+    case 504:
+      return baseMessage ?? 'Der Dienst ist gerade nicht erreichbar. Bitte versuche es in einem Moment erneut.'
     case 500:
       return baseMessage ? `Backend-Fehler. ${baseMessage}` : 'Backend nicht erreichbar oder interner Fehler.'
     default:

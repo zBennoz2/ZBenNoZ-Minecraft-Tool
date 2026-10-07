@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import BackButton from '../components/BackButton'
 import {
   CreateInstancePayload,
   HytaleInstallMode,
@@ -84,10 +83,10 @@ const resolveSupportContact = (license?: LicenseStatus | null) => ({
 const GAME_TEMPLATES = {
   minecraft: {
     label: 'Minecraft Java',
-    description: 'Choose Paper/Fabric/Forge and your Minecraft version.',
+    description: 'Wähle die passende Server-Software und deine Minecraft-Version.',
     serverTypes: [
       { value: 'vanilla', label: 'Vanilla' },
-      { value: 'paper', label: 'Paper' },
+      { value: 'paper', label: 'Paper · Plugins & Performance' },
       { value: 'fabric', label: 'Fabric' },
       { value: 'forge', label: 'Forge' },
       { value: 'neoforge', label: 'NeoForge' },
@@ -95,7 +94,7 @@ const GAME_TEMPLATES = {
   },
   hytale: {
     label: 'Hytale',
-    description: 'Prepare the Hytale server with the official downloader or import files.',
+    description: 'Installiere Hytale über den offiziellen Downloader oder importiere vorhandene Dateien.',
     serverTypes: [{ value: 'hytale', label: 'Hytale' }] as { value: ServerType; label: string }[],
   },
 }
@@ -147,6 +146,7 @@ export function Dashboard() {
   >({})
   const [catalogVersions, setCatalogVersions] = useState<string[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
+  const catalogRequestRef = useRef(0)
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<CreateErrorState | null>(null)
@@ -333,19 +333,25 @@ export function Dashboard() {
   }
 
   const loadCatalog = async (serverType: ServerType) => {
+    const requestId = ++catalogRequestRef.current
     setCatalogLoading(true)
     setCatalogError(null)
+    setCatalogVersions([])
+    setMinecraftVersion('')
     try {
       const result = await getCatalogVersions(serverType)
+      if (requestId !== catalogRequestRef.current) return
+      if (!result.versions.length) throw new Error('Für diesen Server-Typ sind derzeit keine Versionen verfügbar.')
       setCatalogVersions(result.versions ?? [])
       setLoaderVersionsByMinecraft(result.loaderVersionsByMinecraft ?? {})
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load catalog'
+      if (requestId !== catalogRequestRef.current) return
+      const message = resolveApiErrorMessage(err)
       setCatalogError(message)
       setCatalogVersions([])
       setLoaderVersionsByMinecraft({})
     } finally {
-      setCatalogLoading(false)
+      if (requestId === catalogRequestRef.current) setCatalogLoading(false)
     }
   }
 
@@ -430,6 +436,7 @@ export function Dashboard() {
     !createName.trim() ||
     !createGame ||
     !createServerType ||
+    (createGame === 'minecraft' && (catalogLoading || Boolean(catalogError) || !minecraftVersion)) ||
     (createServerType === 'forge' && !loaderVersion) ||
     (showLoaderSelect && loaderOptions.length > 0 && !loaderVersion) ||
     (createGame === 'hytale' &&
@@ -442,6 +449,8 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!createServerType || createGame !== 'minecraft') {
+      catalogRequestRef.current += 1
+      setCatalogLoading(false)
       setCatalogVersions([])
       setLoaderOptions([])
       setLoaderVersionsByMinecraft({})
@@ -449,6 +458,7 @@ export function Dashboard() {
       return
     }
     void loadCatalog(createServerType)
+    return () => { catalogRequestRef.current += 1 }
   }, [createServerType, createGame])
 
   useEffect(() => {
@@ -496,27 +506,30 @@ export function Dashboard() {
 
   return (
     <section className="page">
-      <div className="page__toolbar">
-        <BackButton />
-      </div>
       <div className="page__header page__header--spread">
         <div>
-          <h1>Dashboard</h1>
-          <p className="page__hint">Server overview & quick controls</p>
+          <span className="eyebrow">DEIN CONTROL CENTER</span>
+          <h1>Deine Server.</h1>
+          <p className="page__hint">Deine Server, Spieler und Ressourcen auf einen Blick.</p>
         </div>
         <div className="actions">
           <button className="btn btn--ghost" onClick={fetchInstances} disabled={loading}>
-            {loading ? 'Reloading…' : 'Reload'}
+            {loading ? 'Aktualisieren…' : 'Aktualisieren'}
           </button>
           {isAdmin ? (
             <button className="btn" onClick={handleOpenCreate}>
-              Create Instance
+              Server erstellen
             </button>
           ) : null}
         </div>
       </div>
 
-      <div className="support-card">
+      <div className="dashboard-summary" aria-label="Server-Übersicht">
+        <div><span>Server gesamt</span><strong>{instances.length}</strong></div>
+        <div><span>Gerade online</span><strong>{instances.filter((instance) => (metricsByInstanceId[instance.id]?.status ?? statusByInstanceId[instance.id]?.status) === 'running').length}</strong></div>
+        <div><span>Dein Tarif</span><strong>{planName}</strong></div>
+      </div>
+      <details className="support-card plan-details"><summary>Tarif & Nutzung</summary>
         <div className="page__header">
           <div>
             <h2>Plan & Limits</h2>
@@ -538,14 +551,14 @@ export function Dashboard() {
             </div>
           </div>
         </div>
-      </div>
+      </details>
 
       {error ? <div className="alert alert--error">{error}</div> : null}
       {actionError ? <div className="alert alert--error">{actionError}</div> : null}
-      {loading ? <div className="alert alert--muted">Loading instances…</div> : null}
+      {loading ? <div className="alert alert--muted">Server werden geladen…</div> : null}
 
       {!loading && instances.length === 0 && !error ? (
-        <div className="empty">No instances found.</div>
+        <div className="empty">Noch keine Server. Erstelle deinen ersten Server und lade deine Freunde ein.</div>
       ) : null}
 
       <div className="instance-grid instance-grid--compact">
@@ -598,7 +611,7 @@ export function Dashboard() {
                     {instance.name}
                   </h2>
                   <div className="instance-tile__meta" title={`${instance.id} • ${instance.serverType}`}>
-                    {instance.id} • {instance.serverType}
+                    {instance.serverType.toUpperCase()} · {instance.minecraftVersion ?? 'Version noch nicht gewählt'}
                   </div>
                 </div>
                 <span className={`badge badge--${status}`}>{status}</span>
@@ -739,11 +752,11 @@ export function Dashboard() {
           <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal__header">
               <div>
-                <h2>Create Instance</h2>
-                <p className="page__hint">Spin up a new server quickly</p>
+                <h2>Server erstellen</h2>
+                <p className="page__hint">Wähle Spiel, Server-Software und Version. Du kannst die Einstellungen später ändern.</p>
               </div>
               <button className="btn btn--ghost" onClick={() => setIsCreateOpen(false)}>
-                Close
+                Schließen
               </button>
             </div>
 
@@ -760,8 +773,9 @@ export function Dashboard() {
               </label>
 
               <label className="form__field">
-                <span>Game *</span>
+                <span>Spiel *</span>
                 <select
+                  aria-label="Spiel"
                   value={createGame}
                   onChange={(event) => {
                     const value = event.target.value as CreateGame
@@ -782,7 +796,7 @@ export function Dashboard() {
                   required
                 >
                   <option value="" disabled>
-                    Select a game
+                    Spiel auswählen
                   </option>
                   <option value="minecraft">{GAME_TEMPLATES.minecraft.label}</option>
                   <option value="hytale">{GAME_TEMPLATES.hytale.label}</option>
@@ -795,8 +809,9 @@ export function Dashboard() {
               <div className="form__inline">
                 {createGame === 'minecraft' ? (
                   <label className="form__field">
-                    <span>Server Type *</span>
+                    <span>Server-Software *</span>
                     <select
+                      aria-label="Server-Software"
                       value={createServerType ?? ''}
                       onChange={(event) => {
                         const value = event.target.value as ServerType | ''
@@ -807,7 +822,7 @@ export function Dashboard() {
                       }}
                     >
                       <option value="" disabled>
-                        Select a type
+                        Server-Software auswählen
                       </option>
                       {GAME_TEMPLATES.minecraft.serverTypes.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -820,8 +835,9 @@ export function Dashboard() {
 
                 {createGame === 'minecraft' ? (
                   <label className="form__field">
-                    <span>Minecraft Version</span>
+                    <span>Minecraft-Version</span>
                     <select
+                      aria-label="Minecraft-Version"
                       value={minecraftVersion}
                       onChange={(event) => {
                         setMinecraftVersion(event.target.value)
@@ -833,9 +849,9 @@ export function Dashboard() {
                       <option value="" disabled>
                         {createServerType
                           ? catalogLoading
-                            ? 'Loading versions…'
-                            : 'Select version'
-                          : 'Choose server type first'}
+                            ? 'Versionen werden geladen…'
+                            : 'Version auswählen'
+                          : 'Zuerst Server-Software wählen'}
                       </option>
                       {catalogVersions.map((version) => (
                         <option key={version} value={version}>
@@ -937,8 +953,8 @@ export function Dashboard() {
                 </div>
               ) : null}
 
-              {catalogLoading ? <div className="alert alert--muted">Loading catalog…</div> : null}
-              {catalogError ? <div className="alert alert--error">{catalogError}</div> : null}
+              {catalogLoading ? <div className="alert alert--muted">Verfügbare Versionen werden geladen…</div> : null}
+              {catalogError ? <div className="alert alert--error" role="alert"><p>{catalogError}</p><button type="button" className="btn btn--secondary" disabled={catalogLoading || !createServerType} onClick={() => createServerType && loadCatalog(createServerType)}>Erneut versuchen</button></div> : null}
               {createError ? (
                 <div className="alert alert--error">
                   <div>{createError.message}</div>
@@ -966,10 +982,10 @@ export function Dashboard() {
 
               <div className="actions">
                 <button type="button" className="btn btn--ghost" onClick={() => setIsCreateOpen(false)}>
-                  Cancel
+                  Abbrechen
                 </button>
                 <button type="submit" className="btn" disabled={createDisabled}>
-                  {creating ? 'Creating…' : 'Create'}
+                  {creating ? 'Wird erstellt…' : 'Server erstellen'}
                 </button>
               </div>
             </form>

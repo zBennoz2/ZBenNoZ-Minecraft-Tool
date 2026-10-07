@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { Children, cloneElement, isValidElement, ReactElement, ReactNode, useId } from 'react'
 
 interface FormSectionProps {
   title: string
@@ -30,12 +30,22 @@ interface FormRowProps {
 }
 
 export function FormRow({ label, children, help, alignTop }: FormRowProps) {
+  const id = useId()
+  const helpId = `${id}-help`
+  let labelled = false
+  const controls = Children.map(children, (child) => {
+    if (isValidElement(child) && ['input', 'select', 'textarea'].includes(String(child.type)) && !labelled) {
+      labelled = true
+      return cloneElement(child as ReactElement<{ id?: string; 'aria-describedby'?: string }>, { id, 'aria-describedby': help ? helpId : undefined })
+    }
+    return child
+  })
   return (
     <div className={`form-row${alignTop ? ' form-row--align-start' : ''}`}>
-      <div className="form-label">{label}</div>
+      <label className="form-label" htmlFor={labelled ? id : undefined}>{label}</label>
       <div className="form-control">
-        {children}
-        {help ? <p className="form-help">{help}</p> : null}
+        {controls}
+        {help ? <p id={helpId} className="form-help">{help}</p> : null}
       </div>
     </div>
   )

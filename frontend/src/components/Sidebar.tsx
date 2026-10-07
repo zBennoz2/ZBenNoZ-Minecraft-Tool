@@ -31,20 +31,21 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <div className="sidebar__title">ZBenNoZ Gaming</div>
+        <div className="brand-mark" aria-hidden="true">Z<span>▪</span></div>
+        <div className="sidebar__title">ZBenNoZ<span className="brand-accent"> Gaming</span></div>
         <div className="sidebar__meta">Server Panel</div>
       </div>
-      <nav className="sidebar__nav">
+      <nav className="sidebar__nav" aria-label="Hauptnavigation">
         <NavLink to="/" className={linkClassName} end>
           Dashboard
         </NavLink>
         {isAdmin ? (<>
           <NavLink to="/system" className={linkClassName}>System</NavLink>
-          <NavLink to="/diagnostics" className={linkClassName}>Diagnostics</NavLink>
+          <NavLink to="/diagnostics" className={linkClassName}>Diagnose</NavLink>
           <NavLink to="/users" className={linkClassName}>Benutzer</NavLink>
         </>) : null}
         <NavLink to="/about" className={linkClassName}>
-          Support / About
+          Hilfe & Support
         </NavLink>
       </nav>
 

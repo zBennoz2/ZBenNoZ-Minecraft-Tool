@@ -126,7 +126,7 @@ const validatePort = (value: string, label: string) => {
 const validatePositive = (value: string, label: string, min = 1) => {
   if (!value.trim()) return `${label} darf nicht leer sein`
   const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric < min) {
+  if (!Number.isInteger(numeric) || numeric < min) {
     return `${label} muss mindestens ${min} sein`
   }
   return undefined
@@ -135,7 +135,7 @@ const validatePositive = (value: string, label: string, min = 1) => {
 const validateNonNegative = (value: string, label: string) => {
   if (!value.trim()) return `${label} darf nicht leer sein`
   const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric < 0) {
+  if (!Number.isInteger(numeric) || numeric < 0) {
     return `${label} darf nicht negativ sein`
   }
   return undefined
@@ -143,19 +143,19 @@ const validateNonNegative = (value: string, label: string) => {
 
 const validateBasicForm = (form: BasicFormState): ValidationState => {
   const errors: ValidationState = {}
-  errors.maxPlayers = validatePositive(form.maxPlayers, 'Max Players', 1)
-  errors.serverPort = validatePort(form.serverPort, 'Server Port')
-  errors.spawnProtection = validatePositive(form.spawnProtection, 'Spawn Protection', 0)
-  errors.viewDistance = validatePositive(form.viewDistance, 'View Distance', 2)
-  errors.simulationDistance = validatePositive(form.simulationDistance, 'Simulation Distance', 2)
-  errors.maxWorldSize = validatePositive(form.maxWorldSize, 'Max World Size', 1)
-  errors.playerIdleTimeout = validateNonNegative(form.playerIdleTimeout, 'Idle Timeout')
+  errors.maxPlayers = validatePositive(form.maxPlayers, 'Maximale Spielerzahl', 1)
+  errors.serverPort = validatePort(form.serverPort, 'Server-Port')
+  errors.spawnProtection = validatePositive(form.spawnProtection, 'Spawn-Schutz', 0)
+  errors.viewDistance = validatePositive(form.viewDistance, 'Sichtweite', 2)
+  errors.simulationDistance = validatePositive(form.simulationDistance, 'Simulationsweite', 2)
+  errors.maxWorldSize = validatePositive(form.maxWorldSize, 'Maximaler Weltradius', 1)
+  errors.playerIdleTimeout = validateNonNegative(form.playerIdleTimeout, 'Inaktivität')
 
   if (form.enableRcon || form.rconPort.trim()) {
-    errors.rconPort = validatePort(form.rconPort, 'RCON Port')
+    errors.rconPort = validatePort(form.rconPort, 'RCON-Port')
   }
   if (form.enableRcon && !form.rconPassword.trim()) {
-    errors.rconPassword = 'RCON Password darf nicht leer sein'
+    errors.rconPassword = 'RCON-Passwort darf nicht leer sein'
   }
 
   return errors
@@ -180,24 +180,24 @@ const sections: {
     title: 'Server & Spieler',
     description: 'Basisdaten, Ports und Zugangsregeln für deinen Server.',
     fields: [
-      { id: 'motd', label: 'MOTD', type: 'text', help: 'Text im Multiplayer-Browser. Emojis und Farben möglich.' },
-      { id: 'maxPlayers', label: 'Max Players', type: 'number', help: 'Begrenzt gleichzeitige Spieler. Höhere Werte brauchen mehr RAM.' },
-      { id: 'serverPort', label: 'Server Port', type: 'number', help: 'Standard: 25565. Stelle sicher, dass der Port freigegeben ist.' },
-      { id: 'playerIdleTimeout', label: 'Idle Timeout (min)', type: 'number', help: '0 = kein Autokick. Kickt AFK-Spieler nach Minuten.' },
+      { id: 'motd', label: 'Server-Beschreibung', type: 'text', help: 'Text im Multiplayer-Browser. Emojis und Farben möglich.' },
+      { id: 'maxPlayers', label: 'Maximale Spielerzahl', type: 'number', help: 'Begrenzt gleichzeitige Spieler. Höhere Werte brauchen mehr RAM.' },
+      { id: 'serverPort', label: 'Server-Port', type: 'number', help: 'Standard: 25565. Stelle sicher, dass der Port freigegeben ist.' },
+      { id: 'playerIdleTimeout', label: 'Inaktive Spieler entfernen (Minuten)', type: 'number', help: '0 = kein Autokick. Kickt AFK-Spieler nach Minuten.' },
       { id: 'whiteList', label: 'Whitelist', type: 'toggle', help: 'Nur gelistete Spieler dürfen joinen.' },
-      { id: 'enforceWhitelist', label: 'Enforce Whitelist', type: 'toggle', help: 'Kick Spieler sofort, wenn sie nicht gelistet sind.' },
-      { id: 'onlineMode', label: 'Online Mode', type: 'toggle', help: 'Spieler-Authentifizierung über Mojang. Deaktivieren nur im LAN/offline.' },
+      { id: 'enforceWhitelist', label: 'Whitelist sofort durchsetzen', type: 'toggle', help: 'Kick Spieler sofort, wenn sie nicht gelistet sind.' },
+      { id: 'onlineMode', label: 'Spielerkonten prüfen', type: 'toggle', help: 'Spieler-Authentifizierung über Mojang. Deaktivieren nur im LAN/offline.' },
     ],
   },
   {
     title: 'Welt & Dimensionen',
     description: 'Weltordner, Seeds und welche Dimensionen erzeugt werden dürfen.',
     fields: [
-      { id: 'levelName', label: 'Level Name', type: 'text', help: 'Ordnername der Welt.' },
-      { id: 'levelSeed', label: 'Level Seed', type: 'text', help: 'Optionaler Seed. Leer lassen für Zufallswelt.' },
-      { id: 'allowNether', label: 'Allow Nether', type: 'toggle', help: 'Aktiviere Reisen ins Nether.' },
-      { id: 'allowEnd', label: 'Allow End', type: 'toggle', help: 'Aktiviert die End-Dimension analog zum Nether-Schalter.' },
-      { id: 'generateStructures', label: 'Generate Structures', type: 'toggle', help: 'Dörfer, Festungen & Co. erzeugen.' },
+      { id: 'levelName', label: 'Weltordner', type: 'text', help: 'Ordnername der Welt.' },
+      { id: 'levelSeed', label: 'Welt-Seed', type: 'text', help: 'Optionaler Seed. Leer lassen für Zufallswelt.' },
+      { id: 'allowNether', label: 'Nether erlauben', type: 'toggle', help: 'Aktiviere Reisen ins Nether.' },
+      { id: 'allowEnd', label: 'End erlauben', type: 'toggle', help: 'Aktiviert die End-Dimension analog zum Nether-Schalter.' },
+      { id: 'generateStructures', label: 'Bauwerke generieren', type: 'toggle', help: 'Dörfer, Festungen & Co. erzeugen.' },
     ],
   },
   {
@@ -206,52 +206,52 @@ const sections: {
     fields: [
       {
         id: 'gamemode',
-        label: 'Gamemode',
+        label: 'Spielmodus',
         type: 'select',
         help: 'Standard-Spielmodus für neue Spieler.',
         options: [
-          { value: 'survival', label: 'Survival' },
-          { value: 'creative', label: 'Creative' },
-          { value: 'adventure', label: 'Adventure' },
-          { value: 'spectator', label: 'Spectator' },
+          { value: 'survival', label: 'Überleben' },
+          { value: 'creative', label: 'Kreativ' },
+          { value: 'adventure', label: 'Abenteuer' },
+          { value: 'spectator', label: 'Zuschauer' },
         ],
       },
       {
         id: 'difficulty',
-        label: 'Difficulty',
+        label: 'Schwierigkeit',
         type: 'select',
         help: 'Überlebens-Schwierigkeitsgrad.',
         options: [
-          { value: 'peaceful', label: 'Peaceful' },
-          { value: 'easy', label: 'Easy' },
+          { value: 'peaceful', label: 'Friedlich' },
+          { value: 'easy', label: 'Einfach' },
           { value: 'normal', label: 'Normal' },
-          { value: 'hard', label: 'Hard' },
+          { value: 'hard', label: 'Schwer' },
         ],
       },
-      { id: 'forceGamemode', label: 'Force Gamemode', type: 'toggle', help: 'Setzt den Standard-Gamemode bei jedem Login.' },
-      { id: 'hardcore', label: 'Hardcore Mode', type: 'toggle', help: 'Ein Leben, Welt wird nach Tod gesperrt.' },
+      { id: 'forceGamemode', label: 'Spielmodus erzwingen', type: 'toggle', help: 'Setzt den Standard-Gamemode bei jedem Login.' },
+      { id: 'hardcore', label: 'Hardcore-Modus', type: 'toggle', help: 'Ein Leben pro Spieler. Nach dem Tod ist nur noch der Zuschauermodus verfügbar.' },
       { id: 'pvp', label: 'PvP', type: 'toggle', help: 'Erlaubt Schaden zwischen Spielern.' },
-      { id: 'allowFlight', label: 'Allow Flight', type: 'toggle', help: 'Erlaubt Fliegen (z. B. mit Mods) ohne Kick.' },
-      { id: 'spawnProtection', label: 'Spawn Protection', type: 'number', help: 'Sicherheitsradius um den Spawn in Blöcken.' },
+      { id: 'allowFlight', label: 'Fliegen erlauben', type: 'toggle', help: 'Erlaubt Fliegen (z. B. mit Mods) ohne Kick.' },
+      { id: 'spawnProtection', label: 'Spawn-Schutz', type: 'number', help: 'Sicherheitsradius um den Spawn in Blöcken.' },
     ],
   },
   {
     title: 'Befehle & Remote',
-    description: 'Command Blocks und Remote-Konsole absichern.',
+    description: 'Befehlsblöcke und Remote-Konsole absichern.',
     fields: [
-      { id: 'enableCommandBlock', label: 'Command Blocks', type: 'toggle', help: 'Erlaubt Command Blocks.' },
-      { id: 'enableRcon', label: 'Enable RCON', type: 'toggle', help: 'Remote-Konsole aktivieren.' },
-      { id: 'rconPort', label: 'RCON Port', type: 'number', help: 'Port für RCON-Verbindungen.' },
-      { id: 'rconPassword', label: 'RCON Password', type: 'password', help: 'RCON Passwort (geheim halten).' },
+      { id: 'enableCommandBlock', label: 'Befehlsblöcke', type: 'toggle', help: 'Erlaubt Befehlsblöcke.' },
+      { id: 'enableRcon', label: 'Fernsteuerung (RCON) aktivieren', type: 'toggle', help: 'Remote-Konsole aktivieren.' },
+      { id: 'rconPort', label: 'RCON-Port', type: 'number', help: 'Port für RCON-Verbindungen.' },
+      { id: 'rconPassword', label: 'RCON-Passwort', type: 'password', help: 'RCON Passwort (geheim halten).' },
     ],
   },
   {
     title: 'Performance',
     description: 'Chunk-Entfernungen und Weltgrenzen feinjustieren.',
     fields: [
-      { id: 'viewDistance', label: 'View Distance', type: 'number', help: 'Chunks, die Clients sehen. Niedriger = weniger Last.' },
-      { id: 'simulationDistance', label: 'Simulation Distance', type: 'number', help: 'Chunks, die getickt werden. Niedriger = weniger CPU.' },
-      { id: 'maxWorldSize', label: 'Max World Size', type: 'number', help: 'Maximaler Weltradius (Block). 29999984 ist Vanilla-Default.' },
+      { id: 'viewDistance', label: 'Sichtweite', type: 'number', help: 'Chunks, die Clients sehen. Niedriger = weniger Last.' },
+      { id: 'simulationDistance', label: 'Simulationsweite', type: 'number', help: 'Chunks, die getickt werden. Niedriger = weniger CPU.' },
+      { id: 'maxWorldSize', label: 'Maximaler Weltradius', type: 'number', help: 'Maximaler Weltradius (Block). 29999984 ist Vanilla-Default.' },
     ],
   },
 ]
@@ -260,6 +260,7 @@ export function PropertiesPage() {
   const { id } = useParams()
   const { isInstanceWindow, instanceSearch } = useWindowContext()
 
+  const [search, setSearch] = useState('')
   const [mode, setMode] = useState<Mode>('basic')
   const [exists, setExists] = useState(true)
 
@@ -283,11 +284,20 @@ export function PropertiesPage() {
 
   const validation = useMemo(() => validateBasicForm(basicForm), [basicForm])
   const hasValidationError = useMemo(
-    () => Object.values(validation).some((value) => Boolean(value)),
-    [validation],
+    () => mode === 'basic' && Object.values(validation).some((value) => Boolean(value)),
+    [validation, mode],
   )
 
   const isDirty = currentRaw !== originalRaw
+  const visibleSections = sections.map((section) => ({
+    ...section,
+    fields: section.fields.filter((field) => `${section.title} ${field.label} ${field.help} ${propertyKeyMap[field.id]}`.toLocaleLowerCase('de').includes(search.trim().toLocaleLowerCase('de'))),
+  })).filter((section) => section.fields.length > 0)
+  useEffect(() => {
+    const warnOnLeave = (event: BeforeUnloadEvent) => { if (isDirty) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('beforeunload', warnOnLeave)
+    return () => window.removeEventListener('beforeunload', warnOnLeave)
+  }, [isDirty])
 
   const otherProperties = useMemo(
     () =>
@@ -423,7 +433,7 @@ export function PropertiesPage() {
       setOriginalRaw(savedRaw)
       setCurrentRaw(savedRaw)
       if (mode === 'basic') syncFormWithRaw(savedRaw)
-      setSuccess('server.properties gespeichert. Änderungen werden erst nach Restart wirksam.')
+      setSuccess('Einstellungen gespeichert. Änderungen gelten nach dem nächsten Server-Neustart.')
     } catch (err) {
       setError(resolveError(err, 'Failed to save server.properties'))
     } finally {
@@ -449,9 +459,9 @@ export function PropertiesPage() {
   const statusHint = statusError
     ? statusError
     : status === 'running'
-      ? 'Instance läuft'
+      ? 'Server läuft'
       : status === 'stopped'
-        ? 'Instance gestoppt'
+        ? 'Server gestoppt'
         : 'Status unbekannt'
 
   if (serverType === 'hytale') {
@@ -466,7 +476,7 @@ export function PropertiesPage() {
         </div>
         <div className="page__header page__header--spread">
           <div className="page__cluster">
-            <h1>Server Settings</h1>
+            <h1>Spiel-Einstellungen</h1>
             {id ? <span className="page__id">Instance: {id}</span> : null}
             <p className="page__hint">Hytale nutzt keine server.properties. Bitte verwende den Settings-Tab.</p>
           </div>
@@ -487,37 +497,38 @@ export function PropertiesPage() {
       </div>
       <div className="page__header page__header--spread">
         <div className="page__cluster">
-          <h1>Server Settings</h1>
+          <h1>Spiel-Einstellungen</h1>
           {id ? <span className="page__id">Instance: {id}</span> : null}
-          <p className="page__hint">Bearbeite server.properties komfortabel oder im Raw-Editor.</p>
+          <p className="page__hint">Passe Spielregeln, Welt und Leistung an deinen Server an.</p>
         </div>
 
-        <div className="actions properties__actions">
+        <div className="actions properties__actions save-toolbar">
+          <span className="save-state" role="status">{isDirty ? 'Ungespeicherte Änderungen' : 'Alles gespeichert'}</span>
           <div className="properties__mode">
             <button
               className={`btn btn--ghost ${mode === 'basic' ? 'btn--active' : ''}`}
               onClick={() => setMode('basic')}
             >
-              Basic
+              Einfach
             </button>
             <button
               className={`btn btn--ghost ${mode === 'advanced' ? 'btn--active' : ''}`}
               onClick={() => setMode('advanced')}
             >
-              Advanced
+              Datei-Editor
             </button>
           </div>
 
-          <button className="btn btn--ghost" onClick={fetchProperties} disabled={loading || saving}>
-            {loading ? 'Reloading…' : 'Reload'}
+          <button className="btn btn--ghost" onClick={() => { if (!isDirty || window.confirm('Ungespeicherte Änderungen verwerfen und neu laden?')) void fetchProperties() }} disabled={loading || saving}>
+            {loading ? 'Lädt…' : 'Neu laden'}
           </button>
 
           <button className="btn btn--ghost" onClick={handleReset} disabled={saving || loading || !isDirty}>
-            Reset
+            Verwerfen
           </button>
 
           <button className="btn" onClick={handleSave} disabled={saving || loading || !isDirty || hasValidationError}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Speichert…' : 'Änderungen speichern'}
           </button>
         </div>
       </div>
@@ -530,11 +541,11 @@ export function PropertiesPage() {
             {success}
             <div className="actions actions--inline">
               <button className="btn btn--secondary" onClick={fetchProperties} disabled={loading}>
-                Reload
+                Neu laden
               </button>
               {status === 'running' ? (
                 <button className="btn" onClick={handleRestart} disabled={restartLoading}>
-                  {restartLoading ? 'Restarting…' : 'Restart now'}
+                  {restartLoading ? 'Startet neu…' : 'Jetzt neu starten'}
                 </button>
               ) : (
                 <span className="properties__restart-hint">Restart verfügbar, sobald die Instance läuft.</span>
@@ -543,7 +554,7 @@ export function PropertiesPage() {
           </div>
         ) : null}
 
-        {loading ? <div className="alert alert--muted">Loading server.properties…</div> : null}
+        {loading ? <div className="alert alert--muted">Spiel-Einstellungen werden geladen…</div> : null}
 
         {!loading && !exists ? (
           <div className="alert alert--muted">
@@ -555,8 +566,14 @@ export function PropertiesPage() {
 
         {mode === 'basic' ? (
           <>
+            <div className="settings-search">
+              <label htmlFor="property-search">Einstellung finden</label>
+              <input id="property-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Zum Beispiel Schwierigkeit, Spieler oder Sichtweite …" />
+              <span role="status">{visibleSections.reduce((count, section) => count + section.fields.length, 0)} Einstellungen</span>
+            </div>
+            {!visibleSections.length ? <div className="empty">Keine passende Einstellung gefunden. <button className="btn btn--ghost" onClick={() => setSearch('')}>Suche zurücksetzen</button></div> : null}
             <div className="properties__grid">
-              {sections.map((section) => (
+              {visibleSections.map((section) => (
                 <FormSection key={section.title} title={section.title} description={section.description}>
                   {section.fields.map((field) => {
                   const fieldValue = basicForm[field.id]
@@ -615,9 +632,9 @@ export function PropertiesPage() {
                 </FormSection>
               ))}
 
-              <FormSection
-                title="Other properties"
-                description="Alle nicht gemappten Keys bleiben erhalten. Bearbeite sie im Advanced Mode."
+              {!search.trim() && <FormSection
+                title="Weitere Einstellungen"
+                description="Weitere Einträge bleiben erhalten und lassen sich im Datei-Editor bearbeiten."
               >
                 {otherProperties.length === 0 ? (
                   <div className="empty">Keine weiteren properties gefunden.</div>
@@ -635,7 +652,7 @@ export function PropertiesPage() {
                     ))}
                   </div>
                 )}
-              </FormSection>
+              </FormSection>}
             </div>
 
             {hasValidationError ? (
@@ -643,7 +660,7 @@ export function PropertiesPage() {
             ) : null}
           </>
         ) : (
-          <FormSection title="Advanced / Raw" description="Advanced mode edits the raw file.">
+          <FormSection title="Datei-Editor" description="Bearbeite die server.properties direkt. Nutze pro Zeile einen Eintrag im Format schlüssel=wert.">
             <textarea
               className="textarea properties__raw"
               spellCheck={false}

@@ -27,12 +27,12 @@ interface ActionState {
 
 const tabs = [
   { label: 'Übersicht', to: '' },
-  { label: 'Einstellungen', to: 'settings' },
+  { label: 'Verwaltung', to: 'settings' },
   { label: 'Konsole', to: 'console' },
   { label: 'Dateien', to: 'files' },
-  { label: 'Properties', to: 'properties' },
+  { label: 'Spiel-Einstellungen', to: 'properties' },
   { label: 'Whitelist', to: 'whitelist' },
-  { label: 'Tasks', to: 'tasks' },
+  { label: 'Zeitpläne', to: 'tasks' },
 ]
 
 export function InstanceDetail() {
